@@ -1,5 +1,5 @@
 {
-  "name": "kachabazar-backend",
+  "name": "Horeca1-backend",
   "version": "0.1.0",
   "description": "this is the server of dashter built with node, express, mongoose schema validation and use mongodb as a database",
   "main": "index.js",

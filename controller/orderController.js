@@ -86,7 +86,7 @@ const getAllOrders = async (req, res) => {
     
     // #region agent log
     const fs = require('fs');
-    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
+    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
       const ordersDebug = orders.map(o => ({
         id: o._id,

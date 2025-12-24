@@ -36,6 +36,10 @@ const categorySchema = new mongoose.Schema(
       enum: ['show', 'hide'],
       default: 'show',
     },
+    order: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,

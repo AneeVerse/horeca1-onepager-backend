@@ -423,7 +423,7 @@ const addShippingAddress = async (req, res) => {
 
     // #region agent log
     const fs = require('fs');
-    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
+    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
       fs.appendFileSync(logPath, JSON.stringify({location:'customerController.js:408',message:'Updating customer profile',data:{customerId,updateFields,fullName,email},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})+'\n');
     } catch(e) {}

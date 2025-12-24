@@ -268,6 +268,12 @@ const getStoreCustomizationSetting = async (req, res) => {
       return res.status(404).send({ message: "Settings not found" });
     }
 
+    // #region agent log
+    const quickDeliverySubtitle = storeCustomizationSetting.setting?.home?.quick_delivery_subtitle?.en;
+    const quickDeliveryDescription = storeCustomizationSetting.setting?.home?.quick_delivery_description?.en;
+    fetch('http://127.0.0.1:7243/ingest/7c8b8306-06cf-4e61-b56f-4a46c890ce31',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'backend/controller/settingController.js:271',message:'API returning storeCustomizationSetting',data:{quickDeliverySubtitle,quickDeliveryDescription},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
     res.send(storeCustomizationSetting.setting);
   } catch (err) {
     console.error("getStoreCustomizationSetting error:", err);

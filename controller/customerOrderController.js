@@ -194,7 +194,7 @@ const addRazorpayOrder = async (req, res) => {
     console.log("[Razorpay] Cart items in order:", cartItemsDebug);
     
     // #region agent log
-    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
+    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
       fs.appendFileSync(logPath, JSON.stringify({location:'customerOrderController.js:183',message:'Cart items received in backend',data:{cartItems:cartItemsDebug,cartLength:req.body.cart?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})+'\n');
     } catch(e) {}
@@ -225,7 +225,7 @@ const addRazorpayOrder = async (req, res) => {
     });
     
     // #region agent log
-    const logPath2 = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
+    const logPath2 = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
       const savedCartItems = order.cart?.map(item => ({
         id: item.id,

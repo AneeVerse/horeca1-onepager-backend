@@ -11,7 +11,8 @@ const {
   updateStatus,
   deleteCategory,
   deleteManyCategory,
-  updateManyCategory
+  updateManyCategory,
+  updateCategoryOrder
 
 } = require('../controller/categoryController');
 
@@ -46,5 +47,8 @@ router.patch('/delete/many', deleteManyCategory);
 
 // update many category
 router.patch('/update/many', updateManyCategory);
+
+// update category order
+router.put('/order/update', updateCategoryOrder);
 
 module.exports = router;

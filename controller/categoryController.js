@@ -2,10 +2,15 @@ const Category = require("../models/Category");
 
 const addCategory = async (req, res) => {
   try {
+    // Get the highest order value and add 1 for new category
+    const lastCategory = await Category.findOne({}).sort({ order: -1 });
+    const newOrder = lastCategory && lastCategory.order !== undefined ? lastCategory.order + 1 : 0;
+    
     // Ensure all categories are parent categories (no parentId)
     const categoryData = {
       ...req.body,
       parentId: null, // Explicitly set to null to ensure it's a parent category
+      order: req.body.order !== undefined ? req.body.order : newOrder,
     };
     const newCategory = new Category(categoryData);
     await newCategory.save();
@@ -51,6 +56,7 @@ const getShowingCategory = async (req, res) => {
         { parentId: "" }
       ]
     }).sort({
+      order: 1,
       _id: -1,
     });
 
@@ -97,7 +103,7 @@ const getAllCategories = async (req, res) => {
   try {
     // Get all categories - return only parent categories
     // Filter out any categories that have a parentId set (those are subcategories)
-    const allCategories = await Category.find({}).sort({ _id: -1 });
+    const allCategories = await Category.find({}).sort({ order: 1, _id: -1 });
     
     // Filter to show only parent categories (where parentId is null, undefined, empty, or doesn't exist)
     const parentCategories = allCategories.filter(cat => {
@@ -285,6 +291,38 @@ const readyToParentAndChildrenCategory = (categories, parentId = null) => {
   return categoryList;
 };
 
+// update category order
+const updateCategoryOrder = async (req, res) => {
+  try {
+    const { categories } = req.body; // Array of { _id, order }
+    
+    if (!Array.isArray(categories)) {
+      return res.status(400).send({
+        message: "Categories must be an array",
+      });
+    }
+
+    // Update all categories with their new order
+    const updatePromises = categories.map(({ _id, order }) => {
+      return Category.findByIdAndUpdate(
+        _id,
+        { order: order || 0 },
+        { new: true }
+      );
+    });
+
+    await Promise.all(updatePromises);
+
+    res.status(200).send({
+      message: "Category order updated successfully!",
+    });
+  } catch (err) {
+    res.status(500).send({
+      message: err.message,
+    });
+  }
+};
+
 module.exports = {
   addCategory,
   addAllCategory,
@@ -297,4 +335,5 @@ module.exports = {
   deleteManyCategory,
   getAllCategories,
   updateManyCategory,
+  updateCategoryOrder,
 };
