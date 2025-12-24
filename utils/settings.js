@@ -629,7 +629,7 @@ const setting = [
           de: "Bezahlverfahren",
         },
         continue_button: {
-          en: "Continue Shipping",
+          en: "Continue Shopping",
           de: "Weiterversand",
         },
         confirm_button: {
