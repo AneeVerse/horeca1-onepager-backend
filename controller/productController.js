@@ -233,41 +233,38 @@ const updateManyProducts = async (req, res) => {
   }
 };
 
-const updateStatus = (req, res) => {
-  const newStatus = req.body.status;
-  Product.updateOne(
-    { _id: req.params.id },
-    {
-      $set: {
-        status: newStatus,
-      },
-    },
-    (err) => {
-      if (err) {
-        res.status(500).send({
-          message: err.message,
-        });
-      } else {
-        res.status(200).send({
-          message: `Product ${newStatus} Successfully!`,
-        });
+const updateStatus = async (req, res) => {
+  try {
+    const newStatus = req.body.status;
+    await Product.updateOne(
+      { _id: req.params.id },
+      {
+        $set: {
+          status: newStatus,
+        },
       }
-    }
-  );
+    );
+    res.status(200).send({
+      message: `Product ${newStatus} Successfully!`,
+    });
+  } catch (err) {
+    res.status(500).send({
+      message: err.message,
+    });
+  }
 };
 
-const deleteProduct = (req, res) => {
-  Product.deleteOne({ _id: req.params.id }, (err) => {
-    if (err) {
-      res.status(500).send({
-        message: err.message,
-      });
-    } else {
-      res.status(200).send({
-        message: "Product Deleted Successfully!",
-      });
-    }
-  });
+const deleteProduct = async (req, res) => {
+  try {
+    await Product.deleteOne({ _id: req.params.id });
+    res.status(200).send({
+      message: "Product Deleted Successfully!",
+    });
+  } catch (err) {
+    res.status(500).send({
+      message: err.message,
+    });
+  }
 };
 
 const getShowingStoreProducts = async (req, res) => {
