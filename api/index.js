@@ -6,7 +6,8 @@ const helmet = require("helmet");
 // const http = require("http");
 // const { Server } = require("socket.io");
 
-const { connectDB } = require("../config/db");
+const { connectDB, ensureConnection } = require("../config/db");
+const { ensureDBConnection } = require("../middleware/dbConnection");
 const productRoutes = require("../routes/productRoutes");
 const reviewRoutes = require("../routes/reviewRoutes");
 const customerRoutes = require("../routes/customerRoutes");
@@ -109,13 +110,10 @@ app.get("/test-connection", async (req, res) => {
 });
 
 // Seed default settings endpoint
-app.get("/seed-settings", async (req, res) => {
+app.get("/seed-settings", ensureDBConnection, async (req, res) => {
   const Setting = require("../models/Setting");
-  const { ensureConnection } = require("../config/db");
   
   try {
-    await ensureConnection();
-    
     const results = [];
     
     // Check and create globalSetting
@@ -241,21 +239,22 @@ app.get("/", (req, res) => {
 });
 
 //this for route will need for store front, also for admin dashboard
-app.use("/v1/products/", productRoutes);
-app.use("/v1/reviews/", isAuth, reviewRoutes);
-app.use("/v1/category/", categoryRoutes);
-app.use("/v1/coupon/", couponRoutes);
-app.use("/v1/customer/", customerRoutes);
-app.use("/v1/order/", isAuth, customerOrderRoutes);
-app.use("/v1/attributes/", attributeRoutes);
-app.use("/v1/setting/", settingRoutes);
-app.use("/v1/currency/", isAuth, currencyRoutes);
-app.use("/v1/language/", languageRoutes);
-app.use("/v1/notification/", isAuth, notificationRoutes);
+// Apply DB connection middleware to all routes that need database access
+app.use("/v1/products/", ensureDBConnection, productRoutes);
+app.use("/v1/reviews/", ensureDBConnection, isAuth, reviewRoutes);
+app.use("/v1/category/", ensureDBConnection, categoryRoutes);
+app.use("/v1/coupon/", ensureDBConnection, couponRoutes);
+app.use("/v1/customer/", ensureDBConnection, customerRoutes);
+app.use("/v1/order/", ensureDBConnection, isAuth, customerOrderRoutes);
+app.use("/v1/attributes/", ensureDBConnection, attributeRoutes);
+app.use("/v1/setting/", ensureDBConnection, settingRoutes);
+app.use("/v1/currency/", ensureDBConnection, isAuth, currencyRoutes);
+app.use("/v1/language/", ensureDBConnection, languageRoutes);
+app.use("/v1/notification/", ensureDBConnection, isAuth, notificationRoutes);
 
 //if you not use admin dashboard then these two route will not needed.
-app.use("/v1/admin/", adminRoutes);
-app.use("/v1/orders/", isAuth, orderRoutes);
+app.use("/v1/admin/", ensureDBConnection, adminRoutes);
+app.use("/v1/orders/", ensureDBConnection, isAuth, orderRoutes);
 
 // Use express's default error handling middleware
 app.use((err, req, res, next) => {
