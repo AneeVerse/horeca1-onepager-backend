@@ -31,7 +31,7 @@ const generateAccessToken = (user) => {
       image: user.image,
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_ACCESS_LIFETIME || "15m" } // short-lived
+    { expiresIn: process.env.JWT_ACCESS_LIFETIME || "30d" } // 30 days lifetime
   );
 };
 
@@ -39,7 +39,7 @@ const generateRefreshToken = (user) => {
   return jwt.sign(
     { id: user._id },
     process.env.JWT_REFRESH_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_LIFETIME || "7d" } // longer-lived
+    { expiresIn: process.env.JWT_REFRESH_LIFETIME || "30d" } // 30 days lifetime
   );
 };
 

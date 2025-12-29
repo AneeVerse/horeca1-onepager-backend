@@ -75,9 +75,9 @@ const verifyPhoneNumber = async (req, res) => {
       });
     }
 
-    // Generate a random 6-digit verification code
+    // Generate a random 4-digit verification code
     const verificationCode = Math.floor(
-      100000 + Math.random() * 900000
+      1000 + Math.random() * 9000
     ).toString();
 
     // Send verification code via SMS
@@ -249,7 +249,7 @@ const refreshToken = async (req, res) => {
 
     res.json({
       accessToken,
-      expiresIn: 900, // 15 min
+      expiresIn: 2592000, // 30 days in seconds (30 * 24 * 60 * 60)
       refreshToken, // reuse old, or generateRefreshToken(user) for rotation
     });
   } catch (err) {
