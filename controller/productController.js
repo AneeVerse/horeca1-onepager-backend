@@ -56,10 +56,32 @@ const getAllProducts = async (req, res) => {
   let queryObject = {};
   let sortObject = {};
   if (title) {
-    const titleQueries = languageCodes.map((lang) => ({
-      [`title.${lang}`]: { $regex: `${title}`, $options: "i" },
-    }));
-    queryObject.$or = titleQueries;
+    // Decode URL-encoded title first
+    let decodedTitle;
+    try {
+      decodedTitle = decodeURIComponent(title);
+    } catch (e) {
+      // If already decoded or invalid, use as is
+      decodedTitle = title;
+    }
+    
+    // Split into words and create flexible search
+    const words = decodedTitle.trim().split(/\s+/).filter(word => word.length > 0);
+    
+    if (words.length > 0) {
+      // Escape special regex characters for each word
+      const escapedWords = words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      
+      // Create regex that matches all words (in any order)
+      const regexPattern = escapedWords.join('.*');
+      
+      // Create regex queries for each language
+      const titleQueries = languageCodes.map((lang) => ({
+        [`title.${lang}`]: { $regex: regexPattern, $options: "i" },
+      }));
+      
+      queryObject.$or = titleQueries;
+    }
   }
 
   if (price === "low") {
@@ -287,11 +309,32 @@ const getShowingStoreProducts = async (req, res) => {
     }
 
     if (title) {
-      const titleQueries = languageCodes.map((lang) => ({
-        [`title.${lang}`]: { $regex: `${title}`, $options: "i" },
-      }));
+      // Decode URL-encoded title first
+      let decodedTitle;
+      try {
+        decodedTitle = decodeURIComponent(title);
+      } catch (e) {
+        // If already decoded or invalid, use as is
+        decodedTitle = title;
+      }
+      
+      // Split into words and create flexible search
+      const words = decodedTitle.trim().split(/\s+/).filter(word => word.length > 0);
+      
+      if (words.length > 0) {
+        // Escape special regex characters for each word
+        const escapedWords = words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        
+        // Create regex that matches all words (in any order)
+        const regexPattern = escapedWords.join('.*');
+        
+        // Create regex queries for each language
+        const titleQueries = languageCodes.map((lang) => ({
+          [`title.${lang}`]: { $regex: regexPattern, $options: "i" },
+        }));
 
-      queryObject.$or = titleQueries;
+        queryObject.$or = titleQueries;
+      }
     }
     if (slug) {
       queryObject.slug = { $regex: slug, $options: "i" };
