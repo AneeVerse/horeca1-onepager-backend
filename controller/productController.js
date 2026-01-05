@@ -201,6 +201,7 @@ const updateProduct = async (req, res) => {
       product.isCombination = req.body.isCombination;
       product.variants = req.body.variants;
       product.stock = req.body.stock;
+      product.minOrderQuantity = req.body.minOrderQuantity;
       product.prices = req.body.prices;
       product.bulkPricing = req.body.bulkPricing || product.bulkPricing;
       product.promoPricing = req.body.promoPricing || product.promoPricing;
