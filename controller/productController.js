@@ -64,22 +64,22 @@ const getAllProducts = async (req, res) => {
       // If already decoded or invalid, use as is
       decodedTitle = title;
     }
-    
+
     // Split into words and create flexible search
     const words = decodedTitle.trim().split(/\s+/).filter(word => word.length > 0);
-    
+
     if (words.length > 0) {
       // Escape special regex characters for each word
       const escapedWords = words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-      
+
       // Create regex that matches all words (in any order)
       const regexPattern = escapedWords.join('.*');
-      
+
       // Create regex queries for each language
       const titleQueries = languageCodes.map((lang) => ({
         [`title.${lang}`]: { $regex: regexPattern, $options: "i" },
       }));
-      
+
       queryObject.$or = titleQueries;
     }
   }
@@ -308,6 +308,8 @@ const getShowingStoreProducts = async (req, res) => {
       queryObject.category = categoryId;
     }
 
+    const limits = Number(req.query.limit) || 100;
+
     if (title) {
       // Decode URL-encoded title first
       let decodedTitle;
@@ -317,17 +319,17 @@ const getShowingStoreProducts = async (req, res) => {
         // If already decoded or invalid, use as is
         decodedTitle = title;
       }
-      
+
       // Split into words and create flexible search
       const words = decodedTitle.trim().split(/\s+/).filter(word => word.length > 0);
-      
+
       if (words.length > 0) {
         // Escape special regex characters for each word
         const escapedWords = words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        
+
         // Create regex that matches all words (in any order)
         const regexPattern = escapedWords.join('.*');
-        
+
         // Create regex queries for each language
         const titleQueries = languageCodes.map((lang) => ({
           [`title.${lang}`]: { $regex: regexPattern, $options: "i" },
@@ -350,7 +352,7 @@ const getShowingStoreProducts = async (req, res) => {
       products = await Product.find(queryObject)
         .populate({ path: "category", select: "name _id" })
         .sort({ _id: -1 })
-        .limit(100);
+        .limit(limits);
       relatedProducts = await Product.find({
         category: products[0]?.category,
       }).populate({ path: "category", select: "_id name" });
@@ -362,7 +364,7 @@ const getShowingStoreProducts = async (req, res) => {
       products = await Product.find(queryObject)
         .populate({ path: "category", select: "name _id" })
         .sort({ order: 1, _id: -1 })
-        .limit(100);
+        .limit(limits);
     } else {
       // When no category/title provided (e.g., "See all"), return ALL products
       products = await Product.find(queryObject)
