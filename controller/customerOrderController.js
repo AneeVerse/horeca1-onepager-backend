@@ -28,10 +28,42 @@ const addOrder = async (req, res) => {
 
     const nextInvoice = lastOrder ? lastOrder.invoice + 1 : 10000; // start from 10000 if no orders
 
+    // Calculate GST, Taxable Subtotal, and Total Discount (Product Savings + Coupon)
+    let totalGst = 0;
+    let itemsTotalGross = 0;
+    let productSavings = 0;
+
+    if (req.body.cart && Array.isArray(req.body.cart)) {
+      req.body.cart.forEach(item => {
+        const quantity = item.quantity || 1;
+        const taxPercent = parseFloat(item.taxPercent) || 0;
+        const currentPrice = parseFloat(item.price) || 0;
+        const originalPrice = parseFloat(item.originalPrice || item.prices?.originalPrice || item.prices?.price || currentPrice);
+
+        const itemCurrentGross = currentPrice * quantity;
+        const itemOriginalGross = originalPrice * quantity;
+
+        const taxable = itemCurrentGross / (1 + taxPercent / 100);
+        const gst = itemCurrentGross - taxable;
+
+        itemsTotalGross += itemCurrentGross;
+        totalGst += gst;
+        productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
+      });
+    }
+
+    // Combined discount = Product savings (bulk/promo) + Coupon discount
+    const couponDiscount = parseFloat(req.body.discount) || 0;
+    const totalDiscount = productSavings + couponDiscount;
+
     const newOrder = new Order({
       ...req.body,
       user: req.user._id,
       invoice: nextInvoice,
+      totalGst: totalGst,
+      taxableSubtotal: itemsTotalGross - totalGst,
+      discount: totalDiscount,
+      vat: totalGst,
     });
 
     const order = await newOrder.save();
@@ -109,28 +141,28 @@ const createPaymentIntent = async (req, res) => {
 const createOrderByRazorPay = async (req, res) => {
   try {
     const storeSetting = await Setting.findOne({ name: "storeSetting" });
-    
+
     // Enhanced logging
     const incomingAmount = req.body?.amount;
     const amountInRupees = Number(incomingAmount);
     const amountInPaise = amountInRupees * 100;
-    
+
     console.log("[Razorpay] ========== Order Creation Start ==========");
     console.log("[Razorpay] Incoming amount (rupees):", incomingAmount);
     console.log("[Razorpay] Parsed amount (rupees):", amountInRupees);
     console.log("[Razorpay] Converted amount (paise):", amountInPaise);
     console.log("[Razorpay] Full request body:", JSON.stringify(req.body, null, 2));
-    
+
     // Get Razorpay keys from database or environment variables
     const razorpayId = storeSetting?.setting?.razorpay_id || process.env.RAZORPAY_KEY_ID || process.env.RAZORPAY_ID;
     const razorpaySecret = storeSetting?.setting?.razorpay_secret || process.env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_SECRET;
-    
+
     console.log("[Razorpay] StoreSetting found:", !!storeSetting);
     console.log("[Razorpay] Razorpay ID from DB:", storeSetting?.setting?.razorpay_id ? "Present" : "Missing");
     console.log("[Razorpay] Razorpay Secret from DB:", storeSetting?.setting?.razorpay_secret ? "Present" : "Missing");
     console.log("[Razorpay] Razorpay ID (final):", razorpayId ? "Present" : "MISSING");
     console.log("[Razorpay] Razorpay Secret (final):", razorpaySecret ? "Present" : "MISSING");
-    
+
     if (!razorpayId || !razorpaySecret) {
       console.error("[Razorpay] ERROR: Razorpay credentials are missing!");
       console.error("[Razorpay] Please ensure Razorpay keys are set in database or environment variables");
@@ -138,7 +170,7 @@ const createOrderByRazorPay = async (req, res) => {
         message: "Razorpay configuration is missing. Please contact administrator.",
       });
     }
-    
+
     const instance = new Razorpay({
       key_id: razorpayId,
       key_secret: razorpaySecret,
@@ -148,9 +180,9 @@ const createOrderByRazorPay = async (req, res) => {
       amount: amountInPaise,
       currency: "INR",
     };
-    
+
     console.log("[Razorpay] Options sent to Razorpay API:", JSON.stringify(options, null, 2));
-    
+
     const order = await instance.orders.create(options);
 
     if (!order) {
@@ -159,7 +191,7 @@ const createOrderByRazorPay = async (req, res) => {
         message: "Error occurred when creating order!",
       });
     }
-    
+
     console.log("[Razorpay] Order created successfully:");
     console.log("[Razorpay] Order ID:", order.id);
     console.log("[Razorpay] Order Amount (paise):", order.amount);
@@ -167,7 +199,7 @@ const createOrderByRazorPay = async (req, res) => {
     console.log("[Razorpay] Order Currency:", order.currency);
     console.log("[Razorpay] Full order response:", JSON.stringify(order, null, 2));
     console.log("[Razorpay] ========== Order Creation End ==========");
-    
+
     res.send(order);
   } catch (err) {
     console.log("[Razorpay] ERROR in createOrderByRazorPay:", err.message);
@@ -192,12 +224,12 @@ const addRazorpayOrder = async (req, res) => {
       quantity: item.quantity,
     })) || [];
     console.log("[Razorpay] Cart items in order:", cartItemsDebug);
-    
+
     // #region agent log
     const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
-      fs.appendFileSync(logPath, JSON.stringify({location:'customerOrderController.js:183',message:'Cart items received in backend',data:{cartItems:cartItemsDebug,cartLength:req.body.cart?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})+'\n');
-    } catch(e) {}
+      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:183', message: 'Cart items received in backend', data: { cartItems: cartItemsDebug, cartLength: req.body.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) + '\n');
+    } catch (e) { }
     // #endregion
 
     // Generate invoice number (same logic as addOrder)
@@ -208,10 +240,42 @@ const addRazorpayOrder = async (req, res) => {
 
     const nextInvoice = lastOrder ? lastOrder.invoice + 1 : 10000; // start from 10000 if no orders
 
+    // Calculate GST, Taxable Subtotal, and Total Discount (Product Savings + Coupon)
+    let totalGst = 0;
+    let itemsTotalGross = 0;
+    let productSavings = 0;
+
+    if (req.body.cart && Array.isArray(req.body.cart)) {
+      req.body.cart.forEach(item => {
+        const quantity = item.quantity || 1;
+        const taxPercent = parseFloat(item.taxPercent) || 0;
+        const currentPrice = parseFloat(item.price) || 0;
+        const originalPrice = parseFloat(item.originalPrice || item.prices?.originalPrice || item.prices?.price || currentPrice);
+
+        const itemCurrentGross = currentPrice * quantity;
+        const itemOriginalGross = originalPrice * quantity;
+
+        const taxable = itemCurrentGross / (1 + taxPercent / 100);
+        const gst = itemCurrentGross - taxable;
+
+        itemsTotalGross += itemCurrentGross;
+        totalGst += gst;
+        productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
+      });
+    }
+
+    // Combined discount = Product savings (bulk/promo) + Coupon discount
+    const couponDiscount = parseFloat(req.body.discount) || 0;
+    const totalDiscount = productSavings + couponDiscount;
+
     const newOrder = new Order({
       ...req.body,
       user: req.user._id,
       invoice: nextInvoice,
+      totalGst: totalGst,
+      taxableSubtotal: itemsTotalGross - totalGst,
+      discount: totalDiscount,
+      vat: totalGst,
     });
     const order = await newOrder.save();
     console.log("[Razorpay] Order saved:", {
@@ -223,7 +287,7 @@ const addRazorpayOrder = async (req, res) => {
       status: order.status,
       cartItemsCount: order.cart?.length,
     });
-    
+
     // #region agent log
     const logPath2 = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
@@ -237,8 +301,8 @@ const addRazorpayOrder = async (req, res) => {
         price: item.price,
         quantity: item.quantity,
       })) || [];
-      fs.appendFileSync(logPath2, JSON.stringify({location:'customerOrderController.js:207',message:'Order saved to database',data:{orderId:order._id,invoice:order.invoice,cartItems:savedCartItems,cartLength:order.cart?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n');
-    } catch(e) {}
+      fs.appendFileSync(logPath2, JSON.stringify({ location: 'customerOrderController.js:207', message: 'Order saved to database', data: { orderId: order._id, invoice: order.invoice, cartItems: savedCartItems, cartLength: order.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n');
+    } catch (e) { }
     // #endregion
     res.status(201).send(order);
     handleProductQuantity(order.cart);
@@ -372,6 +436,8 @@ const sendEmailInvoiceToCustomer = async (req, res) => {
       total: req.body.total,
       discount: req.body.discount,
       shipping: req.body.shippingCost,
+      totalGst: req.body.totalGst,
+      taxableSubtotal: req.body.taxableSubtotal,
       currency: req.body.company_info.currency,
       company_name: req.body.company_info.company,
       company_address: req.body.company_info.address,
