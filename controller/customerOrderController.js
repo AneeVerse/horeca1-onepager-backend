@@ -33,14 +33,6 @@ const addOrder = async (req, res) => {
     let itemsTotalGross = 0;
     let productSavings = 0;
 
-    // #region agent log
-    const fs = require('fs');
-    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:32', message: 'Starting GST calculation', data: { cartItemsCount: req.body.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
     if (req.body.cart && Array.isArray(req.body.cart)) {
       req.body.cart.forEach(item => {
         const quantity = item.quantity || 1;
@@ -51,32 +43,14 @@ const addOrder = async (req, res) => {
         const itemCurrentGross = currentPrice * quantity;
         const itemOriginalGross = originalPrice * quantity;
 
-        // #region agent log
-        try {
-          fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:37', message: 'Calculating GST for item', data: { itemId: item.id || item._id, title: item.title, quantity, taxPercent, currentPrice, itemCurrentGross }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-        } catch (e) { }
-        // #endregion
-
         const taxable = itemCurrentGross / (1 + taxPercent / 100);
         const gst = itemCurrentGross - taxable;
-
-        // #region agent log
-        try {
-          fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:48', message: 'GST calculated for item', data: { itemId: item.id || item._id, taxable, gst, totalGstBefore: totalGst }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-        } catch (e) { }
-        // #endregion
 
         itemsTotalGross += itemCurrentGross;
         totalGst += gst;
         productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
       });
     }
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:54', message: 'Total GST calculated', data: { totalGst, itemsTotalGross, taxableSubtotal: itemsTotalGross - totalGst, cartItemsCount: req.body.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-    } catch (e) { }
-    // #endregion
 
     // Combined discount = Product savings (bulk/promo) + Coupon discount
     const couponDiscount = parseFloat(req.body.discount) || 0;
@@ -92,25 +66,7 @@ const addOrder = async (req, res) => {
       vat: totalGst,
     });
 
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:68', message: 'Order being saved with GST', data: { invoice: nextInvoice, totalGst, taxableSubtotal: itemsTotalGross - totalGst, total: req.body.total }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
     const order = await newOrder.save();
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:72', message: 'Order saved', data: { orderId: order._id, invoice: order.invoice, totalGst: order.totalGst, taxableSubtotal: order.taxableSubtotal, vat: order.vat }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:72', message: 'Order saved', data: { orderId: order._id, invoice: order.invoice, totalGst: order.totalGst, taxableSubtotal: order.taxableSubtotal, vat: order.vat }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) + '\n');
-    } catch (e) { }
-    // #endregion
     // console.log("order", order);
 
     res.status(201).send(order);
@@ -256,11 +212,6 @@ const createOrderByRazorPay = async (req, res) => {
 
 const addRazorpayOrder = async (req, res) => {
   try {
-    // #region agent log
-    const fs = require('fs');
-    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
-    // #endregion
-
     // Log cart items structure to verify product details are included
     const cartItemsDebug = req.body.cart?.map(item => ({
       id: item.id,
@@ -273,12 +224,6 @@ const addRazorpayOrder = async (req, res) => {
       quantity: item.quantity,
     })) || [];
     console.log("[Razorpay] Cart items in order:", cartItemsDebug);
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:260', message: 'Cart items received in backend', data: { cartItems: cartItemsDebug, cartLength: req.body.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) + '\n');
-    } catch (e) { }
-    // #endregion
 
     // Generate invoice number (same logic as addOrder)
     const lastOrder = await Order.findOne({})
@@ -293,12 +238,6 @@ const addRazorpayOrder = async (req, res) => {
     let itemsTotalGross = 0;
     let productSavings = 0;
 
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:287', message: 'Starting GST calculation (Razorpay)', data: { cartItemsCount: req.body.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
     if (req.body.cart && Array.isArray(req.body.cart)) {
       req.body.cart.forEach(item => {
         const quantity = item.quantity || 1;
@@ -309,32 +248,14 @@ const addRazorpayOrder = async (req, res) => {
         const itemCurrentGross = currentPrice * quantity;
         const itemOriginalGross = originalPrice * quantity;
 
-        // #region agent log
-        try {
-          fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:293', message: 'Calculating GST for item (Razorpay)', data: { itemId: item.id || item._id, title: item.title, quantity, taxPercent, currentPrice, itemCurrentGross }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) + '\n');
-        } catch (e) { }
-        // #endregion
-
         const taxable = itemCurrentGross / (1 + taxPercent / 100);
         const gst = itemCurrentGross - taxable;
-
-        // #region agent log
-        try {
-          fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:302', message: 'GST calculated for item (Razorpay)', data: { itemId: item.id || item._id, taxable, gst, totalGstBefore: totalGst }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) + '\n');
-        } catch (e) { }
-        // #endregion
 
         itemsTotalGross += itemCurrentGross;
         totalGst += gst;
         productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
       });
     }
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:311', message: 'Total GST calculated (Razorpay)', data: { totalGst, itemsTotalGross, taxableSubtotal: itemsTotalGross - totalGst, cartItemsCount: req.body.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) + '\n');
-    } catch (e) { }
-    // #endregion
 
     // Combined discount = Product savings (bulk/promo) + Coupon discount
     const couponDiscount = parseFloat(req.body.discount) || 0;
@@ -349,20 +270,7 @@ const addRazorpayOrder = async (req, res) => {
       discount: totalDiscount,
       vat: totalGst,
     });
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:325', message: 'Order being saved with GST (Razorpay)', data: { invoice: nextInvoice, totalGst, taxableSubtotal: itemsTotalGross - totalGst, total: req.body.total }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
     const order = await newOrder.save();
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerOrderController.js:282', message: 'Order saved (Razorpay)', data: { orderId: order._id, invoice: order.invoice, totalGst: order.totalGst, taxableSubtotal: order.taxableSubtotal, vat: order.vat }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n');
-    } catch (e) { }
-    // #endregion
     console.log("[Razorpay] Order saved:", {
       id: order._id,
       invoice: order.invoice,
@@ -372,23 +280,6 @@ const addRazorpayOrder = async (req, res) => {
       status: order.status,
       cartItemsCount: order.cart?.length,
     });
-
-    // #region agent log
-    const logPath2 = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
-    try {
-      const savedCartItems = order.cart?.map(item => ({
-        id: item.id,
-        title: item.title,
-        sku: item.sku,
-        hsn: item.hsn,
-        unit: item.unit,
-        brand: item.brand,
-        price: item.price,
-        quantity: item.quantity,
-      })) || [];
-      fs.appendFileSync(logPath2, JSON.stringify({ location: 'customerOrderController.js:207', message: 'Order saved to database', data: { orderId: order._id, invoice: order.invoice, cartItems: savedCartItems, cartLength: order.cart?.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) + '\n');
-    } catch (e) { }
-    // #endregion
     res.status(201).send(order);
     handleProductQuantity(order.cart);
   } catch (err) {
