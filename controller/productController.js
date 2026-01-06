@@ -204,17 +204,7 @@ const updateProduct = async (req, res) => {
       product.minOrderQuantity = req.body.minOrderQuantity;
       product.prices = req.body.prices;
       product.bulkPricing = req.body.bulkPricing || product.bulkPricing;
-      // #region agent log
-      const fs = require('fs');
-      const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\kachabazar\\.cursor\\debug.log';
-      const logData = JSON.stringify({location:'productController.js:207',message:'Before save - promoPricing received',data:{singleUnitTaxable:req.body.promoPricing?.singleUnitTaxable,singleUnit:req.body.promoPricing?.singleUnit,bulkRate1TaxableRate:req.body.promoPricing?.bulkRate1?.taxableRate,bulkRate2TaxableRate:req.body.promoPricing?.bulkRate2?.taxableRate,fullPromoPricing:req.body.promoPricing},timestamp:Date.now(),sessionId:'debug-session',runId:'backend-save',hypothesisId:'C'})+'\n';
-      fs.appendFileSync(logPath, logData);
-      // #endregion
       product.promoPricing = req.body.promoPricing || product.promoPricing;
-      // #region agent log
-      const logData2 = JSON.stringify({location:'productController.js:211',message:'After assignment - promoPricing to save',data:{singleUnitTaxable:product.promoPricing?.singleUnitTaxable,singleUnit:product.promoPricing?.singleUnit,bulkRate1TaxableRate:product.promoPricing?.bulkRate1?.taxableRate,bulkRate2TaxableRate:product.promoPricing?.bulkRate2?.taxableRate,fullPromoPricing:product.promoPricing},timestamp:Date.now(),sessionId:'debug-session',runId:'backend-save',hypothesisId:'C'})+'\n';
-      fs.appendFileSync(logPath, logData2);
-      // #endregion
       product.image = req.body.image;
       product.tag = req.body.tag;
 
