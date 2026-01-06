@@ -31,6 +31,9 @@ const orderSchema = new mongoose.Schema(
       required: true,
     },
     discount: { type: Number, default: 0 },
+    totalGst: { type: Number, default: 0 },
+    taxableSubtotal: { type: Number, default: 0 },
+    vat: { type: Number, default: 0 }, // Alias for totalGst for backward compatibility
 
     total: {
       type: Number,
