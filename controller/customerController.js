@@ -18,6 +18,17 @@ const {
 const { sendVerificationCode } = require("../lib/phone-verification/sender");
 const { sendOTP, verifyOTP, resendOTP } = require("../lib/msg91/otp-service");
 
+// Helper to standardize Indian phone numbers (handles 10-digit and 91 prefix)
+const standardizePhone = (phone) => {
+  if (!phone) return null;
+  let clean = phone.toString().replace(/\D/g, "");
+  // If it's a 10 digit Indian number, add 91 prefix
+  if (clean.length === 10) {
+    clean = "91" + clean;
+  }
+  return clean;
+};
+
 const verifyEmailAddress = async (req, res) => {
   const isAdded = await Customer.findOne({ email: req.body.email });
   if (isAdded) {
@@ -66,8 +77,9 @@ const verifyPhoneNumber = async (req, res) => {
   // }
 
   try {
+    const cleanPhone = standardizePhone(phoneNumber);
     // Check if the phone number is already associated with an existing customer
-    const isAdded = await Customer.findOne({ phone: phoneNumber });
+    const isAdded = await Customer.findOne({ phone: cleanPhone });
 
     if (isAdded) {
       return res.status(403).send({
@@ -185,6 +197,60 @@ const addAllCustomers = async (req, res) => {
     });
   }
 };
+
+// Admin Create Customer (No verification required)
+const adminCreateCustomer = async (req, res) => {
+  try {
+    const { name, phone, email, address } = req.body;
+
+    // Validate required fields
+    if (!name || !phone) {
+      return res.status(400).send({
+        message: "Name and phone are required",
+      });
+    }
+
+    // Standardize phone number (handles 10-digit, 91 prefix, etc.)
+    const cleanPhone = standardizePhone(phone);
+
+    // Check if phone number already exists
+    const existingCustomer = await Customer.findOne({ phone: cleanPhone });
+    if (existingCustomer) {
+      return res.status(400).send({
+        message: "A customer with this phone number already exists",
+      });
+    }
+
+    // Create new customer
+    const newCustomer = new Customer({
+      name: name.trim(),
+      phone: cleanPhone,
+      email: email?.trim() || undefined,
+      address: address?.trim() || undefined,
+    });
+
+    await newCustomer.save();
+
+    res.status(201).send({
+      message: "Customer created successfully",
+      customer: {
+        _id: newCustomer._id,
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        email: newCustomer.email,
+        address: newCustomer.address,
+        createdAt: newCustomer.createdAt,
+        status: "Active",
+      },
+    });
+  } catch (err) {
+    console.error("Error creating customer:", err);
+    res.status(500).send({
+      message: err.message || "Failed to create customer",
+    });
+  }
+};
+
 
 const loginCustomer = async (req, res) => {
   try {
@@ -396,7 +462,7 @@ const addShippingAddress = async (req, res) => {
 
     // Extract name and email from shipping address for progressive profile completion
     const { name, email, firstName, lastName } = newShippingAddress;
-    
+
     // Combine firstName and lastName if name is not provided
     const fullName = name || (firstName && lastName ? `${firstName} ${lastName}`.trim() : firstName || lastName);
 
@@ -425,8 +491,8 @@ const addShippingAddress = async (req, res) => {
     const fs = require('fs');
     const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
     try {
-      fs.appendFileSync(logPath, JSON.stringify({location:'customerController.js:408',message:'Updating customer profile',data:{customerId,updateFields,fullName,email},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})+'\n');
-    } catch(e) {}
+      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerController.js:408', message: 'Updating customer profile', data: { customerId, updateFields, fullName, email }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
+    } catch (e) { }
     // #endregion
 
     // Update the customer
@@ -437,20 +503,20 @@ const addShippingAddress = async (req, res) => {
 
     // #region agent log
     try {
-      fs.appendFileSync(logPath, JSON.stringify({location:'customerController.js:424',message:'Customer update result',data:{modifiedCount:result.modifiedCount,matchedCount:result.matchedCount,customerId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})+'\n');
-    } catch(e) {}
+      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerController.js:424', message: 'Customer update result', data: { modifiedCount: result.modifiedCount, matchedCount: result.matchedCount, customerId }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
+    } catch (e) { }
     // #endregion
 
     if (result.modifiedCount > 0 || result.matchedCount > 0) {
       // Fetch updated customer to return
       const updatedCustomer = await Customer.findById(customerId);
-      
+
       // #region agent log
       try {
-        fs.appendFileSync(logPath, JSON.stringify({location:'customerController.js:432',message:'Updated customer data',data:{customerId,name:updatedCustomer?.name,email:updatedCustomer?.email,phone:updatedCustomer?.phone},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})+'\n');
-      } catch(e) {}
+        fs.appendFileSync(logPath, JSON.stringify({ location: 'customerController.js:432', message: 'Updated customer data', data: { customerId, name: updatedCustomer?.name, email: updatedCustomer?.email, phone: updatedCustomer?.phone }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
+      } catch (e) { }
       // #endregion
-      
+
       return res.send({
         message: "Shipping address added or updated successfully.",
         profileUpdated: !!(fullName || email),
@@ -557,18 +623,32 @@ const updateCustomer = async (req, res) => {
       return res.status(404).send({ message: "Customer not found!" });
     }
 
-    const existingCustomer = await Customer.findOne({ email });
-    if (
-      existingCustomer &&
-      existingCustomer._id.toString() !== customer._id.toString()
-    ) {
-      return res.status(400).send({ message: "Email already exists." });
+    if (email && email.trim() !== "") {
+      const existingEmailCustomer = await Customer.findOne({ email: email.toLowerCase() });
+      if (
+        existingEmailCustomer &&
+        existingEmailCustomer._id.toString() !== customer._id.toString()
+      ) {
+        return res.status(400).send({ message: "Email already exists." });
+      }
+    }
+
+    const cleanPhone = standardizePhone(phone);
+
+    if (cleanPhone) {
+      const existingPhone = await Customer.findOne({ phone: cleanPhone });
+      if (
+        existingPhone &&
+        existingPhone._id.toString() !== customer._id.toString()
+      ) {
+        return res.status(400).send({ message: "Phone number already exists." });
+      }
+      customer.phone = cleanPhone;
     }
 
     customer.name = name;
     customer.email = email;
     customer.address = address;
-    customer.phone = phone;
     customer.image = image;
 
     await customer.save();
@@ -593,18 +673,30 @@ const updateCustomer = async (req, res) => {
   }
 };
 
-const deleteCustomer = (req, res) => {
-  Customer.deleteOne({ _id: req.params.id }, (err) => {
-    if (err) {
-      res.status(500).send({
-        message: err.message,
-      });
-    } else {
-      res.status(200).send({
-        message: "User Deleted Successfully!",
+const deleteCustomer = async (req, res) => {
+  try {
+    const customerId = req.params.id;
+
+    // Check if customer exists
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).send({
+        message: "Customer not found!",
       });
     }
-  });
+
+    // Delete the customer
+    await Customer.deleteOne({ _id: customerId });
+
+    res.status(200).send({
+      message: "User Deleted Successfully!",
+    });
+  } catch (err) {
+    console.error("Error deleting customer:", err);
+    res.status(500).send({
+      message: err.message || "Failed to delete customer",
+    });
+  }
 };
 
 // ==================== OTP Authentication (Passwordless) ====================
@@ -624,8 +716,8 @@ const sendOTPForLogin = async (req, res) => {
       });
     }
 
-    // Clean phone number (remove spaces, dashes, etc.)
-    const cleanPhone = phone.replace(/\D/g, "");
+    // Standardize phone number (handles 10-digit, 91 prefix, etc.)
+    const cleanPhone = standardizePhone(phone);
 
     // Validate phone number format
     if (cleanPhone.length < 10 || cleanPhone.length > 15) {
@@ -648,12 +740,12 @@ const sendOTPForLogin = async (req, res) => {
       message: result.message || "OTP sent successfully",
       phone: cleanPhone, // Return cleaned phone for frontend
     };
-    
+
     // Include OTP in response for dev/testing mode
     if (result.otp) {
       response.otp = result.otp;
     }
-    
+
     res.send(response);
   } catch (err) {
     console.error("Error sending OTP:", err);
@@ -680,8 +772,8 @@ const verifyOTPAndLogin = async (req, res) => {
       });
     }
 
-    // Clean phone number
-    const cleanPhone = phone.replace(/\D/g, "");
+    // Standardize phone number
+    const cleanPhone = standardizePhone(phone);
     console.log(`📞 [verifyOTPAndLogin] Cleaned phone: ${cleanPhone}`);
 
     // Verify OTP via MSG91
@@ -788,6 +880,7 @@ module.exports = {
   verifyPhoneNumber,
   registerCustomer,
   addAllCustomers,
+  adminCreateCustomer,
   signUpWithOauthProvider,
   verifyEmailAddress,
   forgetPassword,

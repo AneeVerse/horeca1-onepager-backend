@@ -15,6 +15,7 @@ const {
   updateCustomer,
   deleteCustomer,
   addAllCustomers,
+  adminCreateCustomer,
   addShippingAddress,
   getShippingAddress,
   updateShippingAddress,
@@ -75,6 +76,9 @@ router.post("/change-password", changePassword);
 
 //add all users
 router.post("/add/all", addAllCustomers);
+
+//admin create customer (no verification needed)
+router.post("/admin/create", adminCreateCustomer);
 
 //get all user
 router.get("/", getAllCustomers);
