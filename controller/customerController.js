@@ -498,6 +498,15 @@ const addShippingAddress = async (req, res) => {
       shippingAddress: newShippingAddress,
     };
 
+    // Extract address details for top-level sync
+    const { address, city, country, zipCode } = newShippingAddress;
+
+    // Sync top-level fields if they are provided in the shipping address
+    if (address) updateFields.address = address;
+    if (city) updateFields.city = city;
+    if (country) updateFields.country = country;
+    if (zipCode) updateFields.zipCode = zipCode;
+
     // Always update name if provided (not just if empty) - ensures profile updates after order
     if (fullName) {
       updateFields.name = fullName;
@@ -566,24 +575,24 @@ const getShippingAddress = async (req, res) => {
     // console.log("addressId", req.query);
 
     const customer = await Customer.findById(customerId);
+
+    // If shippingAddress is not set but top-level fields exist, return them as a fallback
+    if (customer && !customer.shippingAddress && (customer.address || customer.zipCode)) {
+      return res.send({
+        shippingAddress: {
+          name: customer.name,
+          contact: customer.phone,
+          email: customer.email,
+          address: customer.address,
+          city: customer.city,
+          country: customer.country,
+          zipCode: customer.zipCode,
+          isDefault: true,
+        }
+      });
+    }
+
     res.send({ shippingAddress: customer?.shippingAddress });
-
-    // if (addressId) {
-    //   // Find the specific address by its ID
-    //   const address = customer.shippingAddress.find(
-    //     (addr) => addr._id.toString() === addressId.toString()
-    //   );
-
-    //   if (!address) {
-    //     return res.status(404).send({
-    //       message: "Shipping address not found!",
-    //     });
-    //   }
-
-    //   return res.send({ shippingAddress: address });
-    // } else {
-    //   res.send({ shippingAddress: customer?.shippingAddress });
-    // }
   } catch (err) {
     // console.error("Error adding shipping address:", err);
     res.status(500).send({
