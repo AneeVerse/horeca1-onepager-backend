@@ -453,6 +453,9 @@ const sendEmailInvoiceToCustomer = async (req, res) => {
       email: user?.email,
       phone: user?.contact || user?.phone,
       address: user?.address,
+      city: user?.city,
+      country: user?.country,
+      zipCode: user?.zipCode,
       cart: req.body.cart,
     };
 
