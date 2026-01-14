@@ -20,6 +20,7 @@ const {
   getShippingAddress,
   updateShippingAddress,
   deleteShippingAddress,
+  setDefaultShippingAddress,
   sendOTPForLogin,
   verifyOTPAndLogin,
   resendOTPForLogin,
@@ -41,17 +42,20 @@ router.post("/otp/send", sendOTPForLogin);
 router.post("/otp/verify", verifyOTPAndLogin);
 router.post("/otp/resend", resendOTPForLogin);
 
-// shipping address send to array
+// shipping address add new (query param ?id= for updating existing)
 router.post("/shipping/address/:id", addShippingAddress);
 
-// get all shipping address
+// get all shipping addresses (returns array + default)
 router.get("/shipping/address/:id", getShippingAddress);
 
-// shipping address update
-router.put("/shipping/address/:userId/:shippingId", updateShippingAddress);
+// shipping address update specific
+router.put("/shipping/address/:id/:addressId", updateShippingAddress);
 
-// shipping address delete
-router.delete("/shipping/address/:userId/:shippingId", deleteShippingAddress);
+// shipping address delete specific
+router.delete("/shipping/address/:id/:addressId", deleteShippingAddress);
+
+// set default shipping address
+router.put("/shipping/address/:id/:addressId/default", setDefaultShippingAddress);
 
 //register a user
 router.post("/register/:token", registerCustomer);

@@ -475,14 +475,15 @@ const getCustomerById = async (req, res) => {
   }
 };
 
-// Shipping address create or update
+// Shipping address create or update (supports multiple addresses)
 const addShippingAddress = async (req, res) => {
   try {
     const customerId = req.params.id;
-    const newShippingAddress = req.body;
+    const addressId = req.query.id; // If provided, update existing address
+    const newAddressData = req.body;
 
     // Extract name and email from shipping address for progressive profile completion
-    const { name, email, firstName, lastName } = newShippingAddress;
+    const { name, email, firstName, lastName, contact, address, city, country, area, zipCode } = newAddressData;
 
     // Combine firstName and lastName if name is not provided
     const fullName = name || (firstName && lastName ? `${firstName} ${lastName}`.trim() : firstName || lastName);
@@ -493,73 +494,85 @@ const addShippingAddress = async (req, res) => {
       return res.status(404).send({ message: "Customer not found." });
     }
 
-    // Update customer profile - always update name and email when provided during checkout
-    const updateFields = {
-      shippingAddress: newShippingAddress,
+    // Initialize shippingAddresses array if it doesn't exist
+    if (!customer.shippingAddresses) {
+      customer.shippingAddresses = [];
+    }
+
+    // Migrate old single shippingAddress to new array format if exists
+    if (customer.shippingAddress && typeof customer.shippingAddress === 'object' && !Array.isArray(customer.shippingAddress)) {
+      const oldAddress = customer.shippingAddress;
+      if (oldAddress.address || oldAddress.zipCode) {
+        customer.shippingAddresses.push({
+          ...oldAddress,
+          isDefault: true,
+        });
+      }
+      customer.shippingAddress = undefined; // Clear old field
+    }
+
+    // Build the address object
+    const addressObj = {
+      name: fullName || customer.name,
+      contact: contact || customer.phone,
+      email: email || customer.email,
+      address: address,
+      city: city,
+      country: country,
+      area: area || city,
+      zipCode: zipCode,
+      isDefault: customer.shippingAddresses.length === 0, // First address is default
     };
 
-    // Extract address details for top-level sync
-    const { address, city, country, zipCode } = newShippingAddress;
+    if (addressId && addressId.trim() !== '') {
+      // Update existing address
+      const addressIndex = customer.shippingAddresses.findIndex(
+        addr => addr._id.toString() === addressId
+      );
 
-    // Sync top-level fields if they are provided in the shipping address
-    if (address) updateFields.address = address;
-    if (city) updateFields.city = city;
-    if (country) updateFields.country = country;
-    if (zipCode) updateFields.zipCode = zipCode;
+      if (addressIndex === -1) {
+        return res.status(404).send({ message: "Address not found." });
+      }
 
-    // Always update name if provided (not just if empty) - ensures profile updates after order
-    if (fullName) {
-      updateFields.name = fullName;
-    }
-
-    // Always update email if provided (not just if empty) - ensures profile updates after order
-    if (email) {
-      updateFields.email = email.toLowerCase();
-    }
-
-    // #region agent log
-    const fs = require('fs');
-    const logPath = 'c:\\Users\\Roger\\Desktop\\horeca1\\Horeca1\\.cursor\\debug.log';
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerController.js:408', message: 'Updating customer profile', data: { customerId, updateFields, fullName, email }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
-    // Update the customer
-    const result = await Customer.updateOne(
-      { _id: customerId },
-      { $set: updateFields }
-    );
-
-    // #region agent log
-    try {
-      fs.appendFileSync(logPath, JSON.stringify({ location: 'customerController.js:424', message: 'Customer update result', data: { modifiedCount: result.modifiedCount, matchedCount: result.matchedCount, customerId }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-    } catch (e) { }
-    // #endregion
-
-    if (result.modifiedCount > 0 || result.matchedCount > 0) {
-      // Fetch updated customer to return
-      const updatedCustomer = await Customer.findById(customerId);
-
-      // #region agent log
-      try {
-        fs.appendFileSync(logPath, JSON.stringify({ location: 'customerController.js:432', message: 'Updated customer data', data: { customerId, name: updatedCustomer?.name, email: updatedCustomer?.email, phone: updatedCustomer?.phone }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' }) + '\n');
-      } catch (e) { }
-      // #endregion
-
-      return res.send({
-        message: "Shipping address added or updated successfully.",
-        profileUpdated: !!(fullName || email),
-        customer: {
-          name: updatedCustomer?.name,
-          email: updatedCustomer?.email,
-          phone: updatedCustomer?.phone,
-        },
-      });
+      // Keep the existing isDefault status
+      addressObj.isDefault = customer.shippingAddresses[addressIndex].isDefault;
+      customer.shippingAddresses[addressIndex] = {
+        ...customer.shippingAddresses[addressIndex].toObject(),
+        ...addressObj,
+      };
     } else {
-      return res.status(404).send({ message: "Customer not found." });
+      // Add new address
+      customer.shippingAddresses.push(addressObj);
     }
+
+    // Sync top-level profile fields
+    // Always update profile name if this is the default address
+    const isDefaultAddress = addressObj.isDefault || customer.shippingAddresses.length === 1;
+    if (fullName && isDefaultAddress) {
+      customer.name = fullName; // Update profile name from default address
+    } else if (fullName && !customer.name) {
+      customer.name = fullName; // First time setting name
+    }
+    if (email && !customer.email) customer.email = email.toLowerCase();
+    if (address) customer.address = address;
+    if (city) customer.city = city;
+    if (country) customer.country = country;
+    if (zipCode) customer.zipCode = zipCode;
+
+    await customer.save();
+
+    return res.send({
+      message: addressId ? "Address updated successfully." : "Address added successfully.",
+      profileUpdated: !!(fullName || email),
+      shippingAddresses: customer.shippingAddresses,
+      customer: {
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+      },
+    });
   } catch (err) {
+    console.error("Error in addShippingAddress:", err);
     res.status(500).send({
       message: err.message,
     });
@@ -569,32 +582,61 @@ const addShippingAddress = async (req, res) => {
 const getShippingAddress = async (req, res) => {
   try {
     const customerId = req.params.id;
-    // const addressId = req.query.id;
-
-    // console.log("getShippingAddress", customerId);
-    // console.log("addressId", req.query);
+    const addressId = req.query.id;
 
     const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).send({ message: "Customer not found." });
+    }
 
-    // If shippingAddress is not set but top-level fields exist, return them as a fallback
-    if (customer && !customer.shippingAddress && (customer.address || customer.zipCode)) {
-      return res.send({
-        shippingAddress: {
-          name: customer.name,
-          contact: customer.phone,
-          email: customer.email,
-          address: customer.address,
-          city: customer.city,
-          country: customer.country,
-          zipCode: customer.zipCode,
+    // Handle backward compatibility: migrate old single address to array
+    let addresses = customer.shippingAddresses || [];
+
+    // If old single shippingAddress exists and array is empty, include it
+    if (customer.shippingAddress && typeof customer.shippingAddress === 'object' && !Array.isArray(customer.shippingAddress)) {
+      const oldAddr = customer.shippingAddress;
+      if (oldAddr.address || oldAddr.zipCode) {
+        addresses = [{
+          ...oldAddr,
+          _id: customer._id, // Use customer ID as fallback
           isDefault: true,
-        }
+        }, ...addresses];
+      }
+    }
+
+    // If no addresses exist but top-level fields do, create a virtual address
+    if (addresses.length === 0 && (customer.address || customer.zipCode)) {
+      addresses = [{
+        _id: customer._id,
+        name: customer.name,
+        contact: customer.phone,
+        email: customer.email,
+        address: customer.address,
+        city: customer.city,
+        country: customer.country,
+        zipCode: customer.zipCode,
+        isDefault: true,
+      }];
+    }
+
+    // If specific address requested, return just that one (for editing)
+    if (addressId && addressId.trim() !== '') {
+      const specificAddress = addresses.find(addr => addr._id?.toString() === addressId);
+      return res.send({
+        shippingAddress: specificAddress || null,
+        shippingAddresses: addresses,
       });
     }
 
-    res.send({ shippingAddress: customer?.shippingAddress });
+    // Return default address as shippingAddress for backward compatibility
+    const defaultAddress = addresses.find(addr => addr.isDefault) || addresses[0] || null;
+
+    res.send({
+      shippingAddress: defaultAddress,
+      shippingAddresses: addresses,
+    });
   } catch (err) {
-    // console.error("Error adding shipping address:", err);
+    console.error("Error in getShippingAddress:", err);
     res.status(500).send({
       message: err.message,
     });
@@ -603,17 +645,35 @@ const getShippingAddress = async (req, res) => {
 
 const updateShippingAddress = async (req, res) => {
   try {
-    const activeDB = req.activeDB;
+    const customerId = req.params.id;
+    const addressId = req.params.addressId;
+    const updateData = req.body;
 
-    const Customer = activeDB.model("Customer", CustomerModel);
-    const customer = await Customer.findById(req.params.id);
-
-    if (customer) {
-      customer.shippingAddress.push(req.body);
-
-      await customer.save();
-      res.send({ message: "Success" });
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).send({ message: "Customer not found." });
     }
+
+    const addressIndex = customer.shippingAddresses.findIndex(
+      addr => addr._id.toString() === addressId
+    );
+
+    if (addressIndex === -1) {
+      return res.status(404).send({ message: "Address not found." });
+    }
+
+    // Update the address
+    customer.shippingAddresses[addressIndex] = {
+      ...customer.shippingAddresses[addressIndex].toObject(),
+      ...updateData,
+    };
+
+    await customer.save();
+
+    res.send({
+      message: "Address updated successfully!",
+      shippingAddresses: customer.shippingAddresses,
+    });
   } catch (err) {
     res.status(500).send({
       message: err.message,
@@ -623,26 +683,84 @@ const updateShippingAddress = async (req, res) => {
 
 const deleteShippingAddress = async (req, res) => {
   try {
-    const activeDB = req.activeDB;
-    const { userId, shippingId } = req.params;
+    const customerId = req.params.id;
+    const addressId = req.params.addressId;
 
-    const Customer = activeDB.model("Customer", CustomerModel);
-    await Customer.updateOne(
-      { _id: userId },
-      {
-        $pull: {
-          shippingAddress: { _id: shippingId },
-        },
-      }
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).send({ message: "Customer not found." });
+    }
+
+    const addressIndex = customer.shippingAddresses.findIndex(
+      addr => addr._id.toString() === addressId
     );
 
-    res.send({ message: "Shipping Address Deleted Successfully!" });
+    if (addressIndex === -1) {
+      return res.status(404).send({ message: "Address not found." });
+    }
+
+    const wasDefault = customer.shippingAddresses[addressIndex].isDefault;
+
+    // Remove the address
+    customer.shippingAddresses.splice(addressIndex, 1);
+
+    // If deleted address was default, set first remaining address as default
+    if (wasDefault && customer.shippingAddresses.length > 0) {
+      customer.shippingAddresses[0].isDefault = true;
+    }
+
+    await customer.save();
+
+    res.send({
+      message: "Address deleted successfully!",
+      shippingAddresses: customer.shippingAddresses,
+    });
   } catch (err) {
     res.status(500).send({
       message: err.message,
     });
   }
 };
+
+const setDefaultShippingAddress = async (req, res) => {
+  try {
+    const customerId = req.params.id;
+    const addressId = req.params.addressId;
+
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).send({ message: "Customer not found." });
+    }
+
+    // Unset all defaults
+    customer.shippingAddresses.forEach(addr => {
+      addr.isDefault = false;
+    });
+
+    // Set the selected address as default
+    const addressIndex = customer.shippingAddresses.findIndex(
+      addr => addr._id.toString() === addressId
+    );
+
+    if (addressIndex === -1) {
+      return res.status(404).send({ message: "Address not found." });
+    }
+
+    customer.shippingAddresses[addressIndex].isDefault = true;
+
+    await customer.save();
+
+    res.send({
+      message: "Default address updated successfully!",
+      shippingAddresses: customer.shippingAddresses,
+    });
+  } catch (err) {
+    res.status(500).send({
+      message: err.message,
+    });
+  }
+};
+
 
 const updateCustomer = async (req, res) => {
   try {
@@ -945,6 +1063,7 @@ module.exports = {
   getShippingAddress,
   updateShippingAddress,
   deleteShippingAddress,
+  setDefaultShippingAddress,
   // OTP Authentication
   sendOTPForLogin,
   verifyOTPAndLogin,
