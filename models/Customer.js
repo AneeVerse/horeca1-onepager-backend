@@ -27,10 +27,18 @@ const customerSchema = new mongoose.Schema(
       required: false,
     },
 
+    outletName: {
+      type: String,
+      required: false,
+    },
     shippingAddresses: [{
       name: {
         type: String,
         required: true,
+      },
+      outletName: {
+        type: String,
+        required: false,
       },
       contact: {
         type: String,

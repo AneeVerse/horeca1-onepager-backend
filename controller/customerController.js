@@ -201,12 +201,12 @@ const addAllCustomers = async (req, res) => {
 // Admin Create Customer (No verification required)
 const adminCreateCustomer = async (req, res) => {
   try {
-    const { name, phone, email, address, city, country, zipCode } = req.body;
+    const { name, outletName, phone, email, address, city, country, zipCode } = req.body;
 
     // Validate required fields
-    if (!name || !phone) {
+    if (!name || !phone || !outletName) {
       return res.status(400).send({
-        message: "Name and phone are required",
+        message: "Name, phone and outlet name are required",
       });
     }
 
@@ -224,6 +224,7 @@ const adminCreateCustomer = async (req, res) => {
     // Create new customer
     const newCustomer = new Customer({
       name: name.trim(),
+      outletName: outletName.trim(),
       phone: cleanPhone,
       email: email?.trim() || undefined,
       address: address?.trim() || undefined,
@@ -234,8 +235,9 @@ const adminCreateCustomer = async (req, res) => {
 
     // Also set shippingAddress for consistency with checkout
     if (address || city || country || zipCode) {
-      newCustomer.shippingAddress = {
+      newCustomer.shippingAddresses = [{
         name: name.trim(),
+        outletName: outletName.trim(),
         contact: cleanPhone,
         email: email?.trim() || "",
         address: address?.trim() || "",
@@ -243,7 +245,7 @@ const adminCreateCustomer = async (req, res) => {
         country: country?.trim() || "",
         zipCode: zipCode?.trim() || "",
         isDefault: true,
-      };
+      }];
     }
 
     await newCustomer.save();
@@ -256,6 +258,7 @@ const adminCreateCustomer = async (req, res) => {
         phone: newCustomer.phone,
         email: newCustomer.email,
         address: newCustomer.address,
+        outletName: newCustomer.outletName,
         city: newCustomer.city,
         country: newCustomer.country,
         zipCode: newCustomer.zipCode,
@@ -483,7 +486,7 @@ const addShippingAddress = async (req, res) => {
     const newAddressData = req.body;
 
     // Extract name and email from shipping address for progressive profile completion
-    const { name, email, firstName, lastName, contact, address, city, country, area, zipCode } = newAddressData;
+    const { name, outletName, email, firstName, lastName, contact, address, city, country, area, zipCode } = newAddressData;
 
     // Combine firstName and lastName if name is not provided
     const fullName = name || (firstName && lastName ? `${firstName} ${lastName}`.trim() : firstName || lastName);
@@ -514,6 +517,7 @@ const addShippingAddress = async (req, res) => {
     // Build the address object
     const addressObj = {
       name: fullName || customer.name,
+      outletName: outletName || customer.outletName,
       contact: contact || customer.phone,
       email: email || customer.email,
       address: address,
@@ -553,6 +557,7 @@ const addShippingAddress = async (req, res) => {
     } else if (fullName && !customer.name) {
       customer.name = fullName; // First time setting name
     }
+    if (outletName && !customer.outletName) customer.outletName = outletName;
     if (email && !customer.email) customer.email = email.toLowerCase();
     if (address) customer.address = address;
     if (city) customer.city = city;
@@ -764,7 +769,7 @@ const setDefaultShippingAddress = async (req, res) => {
 
 const updateCustomer = async (req, res) => {
   try {
-    const { name, email, address, city, country, zipCode, phone, image } = req.body;
+    const { name, outletName, email, address, city, country, zipCode, phone, image } = req.body;
 
     const customer = await Customer.findById(req.params.id);
     if (!customer) {
@@ -795,6 +800,7 @@ const updateCustomer = async (req, res) => {
     }
 
     customer.name = name;
+    customer.outletName = outletName;
     customer.email = email;
     customer.address = address;
     customer.city = city;
