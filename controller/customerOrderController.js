@@ -69,9 +69,9 @@ const addOrder = async (req, res) => {
           taxable = itemTaxableRate * quantity;
           gst = itemCurrentGross - taxable;
         } else {
-          // Fallback: calculate from gross price
-          gst = itemCurrentGross * (taxPercent / 100);
-          taxable = itemCurrentGross - gst;
+          // Fallback: Taxable = Gross / (1 + Tax/100)
+          taxable = itemCurrentGross / (1 + taxPercent / 100);
+          gst = itemCurrentGross - taxable;
         }
 
         itemsTotalGross += itemCurrentGross;
@@ -81,6 +81,10 @@ const addOrder = async (req, res) => {
       });
     }
 
+    // Use frontend-provided GST/taxable if available (to match checkout display)
+    const finalGst = req.body.totalGst !== undefined ? parseFloat(req.body.totalGst) : totalGst;
+    const finalTaxable = req.body.taxableSubtotal !== undefined ? parseFloat(req.body.taxableSubtotal) : totalTaxableAmount;
+
     // Combined discount = Product savings (bulk/promo) + Coupon discount
     const couponDiscount = parseFloat(req.body.discount) || 0;
     const totalDiscount = productSavings + couponDiscount;
@@ -89,10 +93,10 @@ const addOrder = async (req, res) => {
       ...req.body,
       user: req.user._id,
       invoice: nextInvoice,
-      totalGst: totalGst,
-      taxableSubtotal: totalTaxableAmount,
+      totalGst: finalGst,
+      taxableSubtotal: finalTaxable,
       discount: totalDiscount,
-      vat: totalGst,
+      vat: finalGst,
     });
 
     const order = await newOrder.save();
@@ -318,9 +322,9 @@ const addRazorpayOrder = async (req, res) => {
           taxable = itemTaxableRate * quantity;
           gst = itemCurrentGross - taxable;
         } else {
-          // Fallback: calculate from gross price
-          gst = itemCurrentGross * (taxPercent / 100);
-          taxable = itemCurrentGross - gst;
+          // Fallback: Taxable = Gross / (1 + Tax/100)
+          taxable = itemCurrentGross / (1 + taxPercent / 100);
+          gst = itemCurrentGross - taxable;
         }
 
         itemsTotalGross += itemCurrentGross;
@@ -330,6 +334,10 @@ const addRazorpayOrder = async (req, res) => {
       });
     }
 
+    // Use frontend-provided GST/taxable if available (to match checkout display)
+    const finalGst = req.body.totalGst !== undefined ? parseFloat(req.body.totalGst) : totalGst;
+    const finalTaxable = req.body.taxableSubtotal !== undefined ? parseFloat(req.body.taxableSubtotal) : totalTaxableAmount;
+
     // Combined discount = Product savings (bulk/promo) + Coupon discount
     const couponDiscount = parseFloat(req.body.discount) || 0;
     const totalDiscount = productSavings + couponDiscount;
@@ -338,10 +346,10 @@ const addRazorpayOrder = async (req, res) => {
       ...req.body,
       user: req.user._id,
       invoice: nextInvoice,
-      totalGst: totalGst,
-      taxableSubtotal: totalTaxableAmount,
+      totalGst: finalGst,
+      taxableSubtotal: finalTaxable,
       discount: totalDiscount,
-      vat: totalGst,
+      vat: finalGst,
     });
     const order = await newOrder.save();
     console.log("[Razorpay] ========== Order Saved Successfully ==========");

@@ -3,13 +3,13 @@
     "setting": {
       "number_of_image_per_product": "5",
       "shop_name": "Horeca1",
-      "address": "59 Station Rd, Purls Bridge, United Kingdom",
-      "company_name": "HtmlLover ltd",
-      "vat_number": "47589",
-      "post_code": "2030",
-      "contact": "019579034",
-      "email": "Horeca1@gmail.com",
-      "website": "Horeca1-admin.vercel.app",
+      "address": "C-003, Station Complex, Sanpada, Navi Mumbai - 400705",
+      "company_name": "HCX Global Pvt. Ltd.",
+      "vat_number": "27AAJCH7899F1ZC",
+      "post_code": "400705",
+      "contact": "9136659294",
+      "email": "team.horeca1@gmail.com",
+      "website": "www.horeca1.com",
       "default_currency": "€",
       "default_time_zone": "Europe/London",
       "default_date_format": "MMM D, YYYY",
@@ -92,7 +92,10 @@
         "popular_products_status": true,
         "discount_product_status": true,
         "feature_promo_status": true,
-        "discount_coupon_code": ["WINTER21", "OCTOBER21"],
+        "discount_coupon_code": [
+          "WINTER21",
+          "OCTOBER21"
+        ],
         "place_holder_img": "",
         "discount_title": {
           "en": "Latest Super Discount Active Coupon Code",
@@ -356,7 +359,12 @@
           "en": "Mega Offer",
           "de": "Mega Angebot"
         },
-        "coupon_code": ["SUMMER21", "WINTER21", "AUGUST21", "OCTOBER21"]
+        "coupon_code": [
+          "SUMMER21",
+          "WINTER21",
+          "AUGUST21",
+          "OCTOBER21"
+        ]
       },
       "privacy_policy": {
         "status": true,
@@ -869,7 +877,6 @@
       "fb_pixel_status": false,
       "google_analytic_key": "",
       "google_analytic_status": false,
-
       "google_login_status": false,
       "github_login_status": false,
       "facebook_login_status": false,
