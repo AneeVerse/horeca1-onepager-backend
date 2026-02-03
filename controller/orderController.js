@@ -80,7 +80,7 @@ const getAllOrders = async (req, res) => {
       .select(
         "_id invoice paymentMethod subTotal total user_info discount shippingCost status createdAt updatedAt cart"
       )
-      .sort({ updatedAt: -1 })
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limits);
 
