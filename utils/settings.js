@@ -3,10 +3,10 @@ const setting = [
     setting: {
       number_of_image_per_product: "5",
       shop_name: "Horeca1",
-      address: "C-003, Station Complex, Sanpada, Navi Mumbai - 400705",
+      address: "Navi Mumbai Maharashtra 400705",
       company_name: "HCX Global Pvt. Ltd.",
-      vat_number: "27AAJCH7899F1ZC",
-      post_code: "400705",
+      vat_number: "27AAECH8215M1Z9",
+      fssai: "11526017000005",
       contact: "9136659294",
       email: "team.horeca1@gmail.com",
       website: "Horeca1-admin.vercel.app",

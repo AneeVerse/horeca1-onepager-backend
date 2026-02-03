@@ -3,8 +3,9 @@ const mongoose = require('mongoose');
 
 // Correct Company Details
 const COMPANY_NAME = "HCX Global Pvt. Ltd.";
-const CORRECT_ADDRESS = "C-003, Station Complex, Sanpada, Navi Mumbai - 400705";
-const GST_NUMBER = "27AAJCH7899F1ZC"; // Update this with actual GST number if different
+const CORRECT_ADDRESS = "Navi Mumbai Maharashtra 400705";
+const GST_NUMBER = "27AAECH8215M1Z9";
+const FSSAI = "11526017000005";
 
 async function updateCompanyDetails() {
     try {
@@ -22,6 +23,7 @@ async function updateCompanyDetails() {
                     'setting.address': CORRECT_ADDRESS,
                     'setting.company_name': COMPANY_NAME,
                     'setting.vat_number': GST_NUMBER,
+                    'setting.fssai': FSSAI,
                 }
             }
         );
@@ -32,7 +34,8 @@ async function updateCompanyDetails() {
         console.log('Current globalSetting:');
         console.log('  - Address:', globalSetting?.setting?.address);
         console.log('  - Company Name:', globalSetting?.setting?.company_name);
-        console.log('  - VAT/GST Number:', globalSetting?.setting?.vat_number);
+        console.log('  - GSTIN:', globalSetting?.setting?.vat_number);
+        console.log('  - FSSAI:', globalSetting?.setting?.fssai);
 
         // Update storeSetting if exists
         console.log('\n=== Updating storeSetting ===');
@@ -43,6 +46,7 @@ async function updateCompanyDetails() {
                     'setting.address': CORRECT_ADDRESS,
                     'setting.company_name': COMPANY_NAME,
                     'setting.vat_number': GST_NUMBER,
+                    'setting.fssai': FSSAI,
                 }
             }
         );
@@ -54,7 +58,8 @@ async function updateCompanyDetails() {
             console.log('Current storeSetting:');
             console.log('  - Address:', storeSetting?.setting?.address);
             console.log('  - Company Name:', storeSetting?.setting?.company_name);
-            console.log('  - VAT/GST Number:', storeSetting?.setting?.vat_number);
+            console.log('  - GSTIN:', storeSetting?.setting?.vat_number);
+            console.log('  - FSSAI:', storeSetting?.setting?.fssai);
         }
 
         await mongoose.disconnect();
