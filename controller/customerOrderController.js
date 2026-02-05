@@ -212,6 +212,7 @@ const createOrderByRazorPay = async (req, res) => {
     const options = {
       amount: amountInPaise,
       currency: "INR",
+      payment_capture: 1, // Auto-capture payment immediately after authorization
     };
 
     console.log("[Razorpay] Options sent to Razorpay API:", JSON.stringify(options, null, 2));
