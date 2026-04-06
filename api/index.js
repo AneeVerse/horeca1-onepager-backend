@@ -46,7 +46,20 @@ const app = express();
 // app.enable('trust proxy');
 app.set("trust proxy", 1);
 
-app.use(express.json({ limit: "4mb" }));
+// IMPORTANT: the Razorpay webhook endpoint needs the RAW request body so we
+// can verify the HMAC-SHA256 signature byte-for-byte. For every other route
+// we still want parsed JSON. We do this by capturing the raw body inside the
+// express.json() `verify` callback on the webhook path only.
+app.use(
+  express.json({
+    limit: "4mb",
+    verify: (req, res, buf) => {
+      if (req.originalUrl && req.originalUrl.includes("/razorpay/webhook")) {
+        req.rawBody = buf.toString("utf8");
+      }
+    },
+  })
+);
 app.use(helmet());
 app.options("*", cors()); // include before other routes
 app.use(cors());
@@ -234,6 +247,50 @@ app.get("/seed-settings", ensureDBConnection, async (req, res) => {
   }
 });
 
+// ONE-TIME migration: fix the PendingPayment indexes.
+// The old schema had razorpayPaymentId as required + unique. The new schema
+// uses razorpayOrderId as the unique primary key and makes razorpayPaymentId
+// optional (created-before-capture flow). Call this endpoint once after deploy.
+app.get("/migrate-pending-payments-indexes", ensureDBConnection, async (req, res) => {
+  const mongoose = require("mongoose");
+  try {
+    const collection = mongoose.connection.db.collection("pendingpayments");
+    const indexes = await collection.indexes();
+    const results = [];
+
+    // Drop old unique index on razorpayPaymentId if it exists
+    for (const idx of indexes) {
+      if (idx.key && idx.key.razorpayPaymentId === 1 && idx.unique === true) {
+        await collection.dropIndex(idx.name);
+        results.push(`Dropped old unique index: ${idx.name}`);
+      }
+    }
+
+    // Ensure new indexes exist (mongoose would also do this, but explicit is safer)
+    await collection.createIndex({ razorpayOrderId: 1 }, { unique: true });
+    results.push("Ensured unique index on razorpayOrderId");
+
+    await collection.createIndex({ razorpayPaymentId: 1 });
+    results.push("Ensured index on razorpayPaymentId (non-unique)");
+
+    await collection.createIndex({ status: 1 });
+    results.push("Ensured index on status");
+
+    await collection.createIndex({ userId: 1 });
+    results.push("Ensured index on userId");
+
+    const finalIndexes = await collection.indexes();
+    res.json({
+      success: true,
+      message: "PendingPayment indexes migrated",
+      results,
+      finalIndexes: finalIndexes.map((i) => ({ name: i.name, key: i.key, unique: i.unique || false })),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message, stack: err.stack });
+  }
+});
+
 //root route
 app.get("/", (req, res) => {
   res.send("App works properly!");
@@ -246,7 +303,10 @@ app.use("/v1/reviews/", ensureDBConnection, isAuth, reviewRoutes);
 app.use("/v1/category/", ensureDBConnection, categoryRoutes);
 app.use("/v1/coupon/", ensureDBConnection, couponRoutes);
 app.use("/v1/customer/", ensureDBConnection, customerRoutes);
-app.use("/v1/order/", ensureDBConnection, isAuth, customerOrderRoutes);
+// Note: customerOrderRoutes applies isAuth/optionalAuth per-route. Some routes
+// (razorpay webhook, pending-payment, add/razorpay) MUST be public so that a
+// captured payment is never lost to an expired token. See the route file.
+app.use("/v1/order/", ensureDBConnection, customerOrderRoutes);
 app.use("/v1/attributes/", ensureDBConnection, attributeRoutes);
 app.use("/v1/setting/", ensureDBConnection, settingRoutes);
 app.use("/v1/currency/", ensureDBConnection, isAuth, currencyRoutes);

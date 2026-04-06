@@ -92,6 +92,26 @@ const isAuth = async (req, res, next) => {
   }
 };
 
+// Optional auth: attaches req.user if a valid token is present, but does NOT reject
+// if the token is missing or expired. Used for payment/webhook routes where the flow
+// must complete even if the customer's session cookie has expired (e.g. long UPI approval).
+const optionalAuth = async (req, res, next) => {
+  try {
+    const { authorization } = req.headers;
+    if (authorization) {
+      const token = authorization.split(" ")[1];
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = decoded;
+      }
+    }
+  } catch (err) {
+    // Token invalid / expired — intentionally continue without user
+    console.log("[optionalAuth] Token invalid or expired, continuing unauthed:", err.message);
+  }
+  next();
+};
+
 const isAdmin = async (req, res, next) => {
   const admin = await Admin.findOne({ role: "Admin" });
   if (admin) {
@@ -128,6 +148,7 @@ const handleEncryptData = (data) => {
 
 module.exports = {
   isAuth,
+  optionalAuth,
   isAdmin,
   signInToken,
   tokenForVerify,

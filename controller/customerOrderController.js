@@ -10,114 +10,153 @@ const fs = require("fs");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const Setting = require("../models/Setting");
+const PendingPayment = require("../models/PendingPayment");
 const { sendEmail, sendEmailAsync } = require("../lib/email-sender/sender");
 const { formatAmountForStripe } = require("../lib/stripe/stripe");
 const { handleCreateInvoice } = require("../lib/email-sender/create");
 const { handleProductQuantity } = require("../lib/stock-controller/others");
+const { verifyRazorpayPaymentSignature, verifyRazorpayWebhookSignature } = require("../lib/razorpay/verify");
 const customerInvoiceEmailBody = require("../lib/email-sender/templates/order-to-customer");
 
-const addOrder = async (req, res) => {
-  // console.log("addOrder", req.body);
-  // console.log("req.user._id", req.user._id);
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  try {
-    // 1️⃣ Get the latest invoice number
-    const lastOrder = await Order.findOne({})
-      .sort({ invoice: -1 }) // get the order with highest invoice
-      .select("invoice")
-      .lean();
+// Look up Razorpay credentials (DB first, then env fallback)
+const getRazorpayCredentials = async () => {
+  const storeSetting = await Setting.findOne({ name: "storeSetting" });
+  const key_id = storeSetting?.setting?.razorpay_id || process.env.RAZORPAY_KEY_ID || process.env.RAZORPAY_ID;
+  const key_secret = storeSetting?.setting?.razorpay_secret || process.env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_SECRET;
+  return { key_id, key_secret };
+};
 
-    const nextInvoice = lastOrder ? lastOrder.invoice + 1 : 10000; // start from 10000 if no orders
+// Compute cart totals (GST, taxable, product savings) — extracted so addOrder,
+// addRazorpayOrder and the webhook-triggered creation all use identical math.
+const computeCartTotals = async (cart) => {
+  let totalGst = 0;
+  let itemsTotalGross = 0;
+  let productSavings = 0;
+  let totalTaxableAmount = 0;
 
-    // Calculate GST, Taxable Subtotal, and Total Discount (Product Savings + Coupon)
-    let totalGst = 0;
-    let itemsTotalGross = 0;
-    let productSavings = 0;
-    let totalTaxableAmount = 0;
+  if (!cart || !Array.isArray(cart) || cart.length === 0) {
+    return { totalGst, itemsTotalGross, productSavings, totalTaxableAmount, stockError: null };
+  }
 
-    if (req.body.cart && Array.isArray(req.body.cart)) {
-      // 1.5️⃣ Check stock for all items in a single batch query (Optimization)
-      const cartProductIds = req.body.cart.map(item => item._id);
-      const dbProducts = await Product.find({ _id: { $in: cartProductIds } }).lean();
+  // Stock validation in one query
+  const cartProductIds = cart.map((item) => item._id).filter(Boolean);
+  const dbProducts = await Product.find({ _id: { $in: cartProductIds } }).lean();
+  const productMap = dbProducts.reduce((acc, product) => {
+    acc[product._id.toString()] = product;
+    return acc;
+  }, {});
 
-      const productMap = dbProducts.reduce((acc, product) => {
-        acc[product._id.toString()] = product;
-        return acc;
-      }, {});
+  for (const item of cart) {
+    const product = productMap[(item._id || "").toString()];
+    if (!product) {
+      return { stockError: { code: 404, message: `Product ${item.title} not found!` } };
+    }
+    if (product.stock < item.quantity) {
+      return {
+        stockError: {
+          code: 400,
+          message: `Insufficient stock for ${item.title}! Available: ${product.stock}, Requested: ${item.quantity}`,
+        },
+      };
+    }
+  }
 
-      for (const item of req.body.cart) {
-        const product = productMap[item._id.toString()];
-        if (!product) {
-          return res.status(404).send({ message: `Product ${item.title} not found!` });
-        }
+  cart.forEach((item) => {
+    const quantity = item.quantity || 1;
+    const taxPercent = parseFloat(item.taxPercent) || 0;
+    const currentPrice = parseFloat(item.price) || 0;
+    const originalPrice = parseFloat(
+      item.originalPrice || item.prices?.originalPrice || item.prices?.price || currentPrice
+    );
 
-        if (product.stock < item.quantity) {
-          return res.status(400).send({
-            message: `Insufficient stock for ${item.title}! Available: ${product.stock}, Requested: ${item.quantity}`,
-          });
-        }
-      }
+    const itemCurrentGross = currentPrice * quantity;
+    const itemOriginalGross = originalPrice * quantity;
 
-      req.body.cart.forEach(item => {
-        const quantity = item.quantity || 1;
-        const taxPercent = parseFloat(item.taxPercent) || 0;
-        const currentPrice = parseFloat(item.price) || 0;
-        const originalPrice = parseFloat(item.originalPrice || item.prices?.originalPrice || item.prices?.price || currentPrice);
-
-        const itemCurrentGross = currentPrice * quantity;
-        const itemOriginalGross = originalPrice * quantity;
-
-        // Taxable = Gross - GST, where GST = Gross × Tax%
-        // Use stored taxableRate from cart item (already calculated as Gross - GST per unit)
-        // Fallback: calculate from price if taxableRate not available
-        const itemTaxableRate = parseFloat(item.taxableRate);
-        let taxable, gst;
-        if (itemTaxableRate && itemTaxableRate > 0) {
-          // Use stored taxable rate
-          taxable = itemTaxableRate * quantity;
-          gst = itemCurrentGross - taxable;
-        } else {
-          // Fallback: Taxable = Gross / (1 + Tax/100)
-          taxable = itemCurrentGross / (1 + taxPercent / 100);
-          gst = itemCurrentGross - taxable;
-        }
-
-        itemsTotalGross += itemCurrentGross;
-        totalTaxableAmount += taxable;
-        totalGst += gst;
-        productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
-      });
+    const itemTaxableRate = parseFloat(item.taxableRate);
+    let taxable, gst;
+    if (itemTaxableRate && itemTaxableRate > 0) {
+      taxable = itemTaxableRate * quantity;
+      gst = itemCurrentGross - taxable;
+    } else {
+      taxable = itemCurrentGross / (1 + taxPercent / 100);
+      gst = itemCurrentGross - taxable;
     }
 
-    // Use frontend-provided GST/taxable if available (to match checkout display)
-    const finalGst = req.body.totalGst !== undefined ? parseFloat(req.body.totalGst) : totalGst;
-    const finalTaxable = req.body.taxableSubtotal !== undefined ? parseFloat(req.body.taxableSubtotal) : totalTaxableAmount;
+    itemsTotalGross += itemCurrentGross;
+    totalTaxableAmount += taxable;
+    totalGst += gst;
+    productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
+  });
 
-    // Combined discount = Product savings (bulk/promo) + Coupon discount
-    const couponDiscount = parseFloat(req.body.discount) || 0;
-    const totalDiscount = productSavings + couponDiscount;
+  return { totalGst, itemsTotalGross, productSavings, totalTaxableAmount, stockError: null };
+};
 
-    const newOrder = new Order({
-      ...req.body,
-      user: req.user._id,
-      invoice: nextInvoice,
-      totalGst: finalGst,
-      taxableSubtotal: finalTaxable,
-      discount: totalDiscount,
-      vat: finalGst,
+// Core order-creation helper shared by handler + webhook recovery.
+// Guarantees idempotency: if an Order already exists for the given razorpayPaymentId,
+// that existing order is returned instead of creating a duplicate.
+const createOrderFromPayload = async ({ userId, orderInfo, razorpay }) => {
+  // Idempotency guard — most important safety check
+  if (razorpay?.razorpayPaymentId) {
+    const existing = await Order.findOne({
+      "razorpay.razorpayPaymentId": razorpay.razorpayPaymentId,
     });
+    if (existing) {
+      console.log("[createOrderFromPayload] Order already exists for paymentId:", razorpay.razorpayPaymentId);
+      return { order: existing, created: false };
+    }
+  }
 
-    const order = await newOrder.save();
-    // console.log("order", order);
+  const { totalGst, productSavings, totalTaxableAmount, stockError } = await computeCartTotals(orderInfo.cart);
+  if (stockError) {
+    const err = new Error(stockError.message);
+    err.statusCode = stockError.code;
+    throw err;
+  }
 
+  const lastOrder = await Order.findOne({}).sort({ invoice: -1 }).select("invoice").lean();
+  const nextInvoice = lastOrder ? lastOrder.invoice + 1 : 10000;
+
+  const finalGst = orderInfo.totalGst !== undefined ? parseFloat(orderInfo.totalGst) : totalGst;
+  const finalTaxable =
+    orderInfo.taxableSubtotal !== undefined ? parseFloat(orderInfo.taxableSubtotal) : totalTaxableAmount;
+  const couponDiscount = parseFloat(orderInfo.discount) || 0;
+  const totalDiscount = productSavings + couponDiscount;
+
+  const newOrder = new Order({
+    ...orderInfo,
+    user: userId,
+    invoice: nextInvoice,
+    totalGst: finalGst,
+    taxableSubtotal: finalTaxable,
+    discount: totalDiscount,
+    vat: finalGst,
+    razorpay: razorpay || orderInfo.razorpay,
+  });
+
+  const order = await newOrder.save();
+  // Fire-and-forget stock decrement
+  handleProductQuantity(order.cart);
+  return { order, created: true };
+};
+
+const addOrder = async (req, res) => {
+  try {
+    if (!req.user?._id) {
+      return res.status(401).send({ message: "Authentication required" });
+    }
+    const { order } = await createOrderFromPayload({
+      userId: req.user._id,
+      orderInfo: req.body,
+      razorpay: req.body.razorpay,
+    });
     res.status(201).send(order);
-    handleProductQuantity(order.cart);
   } catch (err) {
-    // console.log("error", err);
-
-    res.status(500).send({
-      message: err.message,
-    });
+    console.error("[addOrder] Error:", err.message);
+    res.status(err.statusCode || 500).send({ message: err.message });
   }
 };
 
@@ -181,252 +220,353 @@ const createPaymentIntent = async (req, res) => {
 
 const createOrderByRazorPay = async (req, res) => {
   try {
-    const storeSetting = await Setting.findOne({ name: "storeSetting" });
-
-    // Enhanced logging
     const incomingAmount = req.body?.amount;
     const amountInRupees = Number(incomingAmount);
-    const amountInPaise = amountInRupees * 100;
+    const amountInPaise = Math.round(amountInRupees * 100);
 
     console.log("[Razorpay] ========== Order Creation Start ==========");
     console.log("[Razorpay] Incoming amount (rupees):", incomingAmount);
-    // Reduced verbosity for production
-    // console.log("[Razorpay] Full request body:", JSON.stringify(req.body, null, 2));
+    console.log("[Razorpay] Authenticated user ID:", req.user?._id || "anonymous");
 
-    // Get Razorpay keys from database or environment variables
-    const razorpayId = storeSetting?.setting?.razorpay_id || process.env.RAZORPAY_KEY_ID || process.env.RAZORPAY_ID;
-    const razorpaySecret = storeSetting?.setting?.razorpay_secret || process.env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_SECRET;
+    if (!amountInPaise || amountInPaise < 100) {
+      return res.status(400).send({ message: "Invalid amount" });
+    }
 
-    console.log("[Razorpay] StoreSetting found:", !!storeSetting);
-    console.log("[Razorpay] Razorpay ID from DB:", storeSetting?.setting?.razorpay_id ? "Present" : "Missing");
-    console.log("[Razorpay] Razorpay Secret from DB:", storeSetting?.setting?.razorpay_secret ? "Present" : "Missing");
-    console.log("[Razorpay] Razorpay ID (final):", razorpayId ? "Present" : "MISSING");
-    console.log("[Razorpay] Razorpay Secret (final):", razorpaySecret ? "Present" : "MISSING");
-
-    if (!razorpayId || !razorpaySecret) {
-      console.error("[Razorpay] ERROR: Razorpay credentials are missing!");
-      console.error("[Razorpay] Please ensure Razorpay keys are set in database or environment variables");
+    const { key_id, key_secret } = await getRazorpayCredentials();
+    if (!key_id || !key_secret) {
+      console.error("[Razorpay] ERROR: Razorpay credentials missing");
       return res.status(500).send({
         message: "Razorpay configuration is missing. Please contact administrator.",
       });
     }
 
-    const instance = new Razorpay({
-      key_id: razorpayId,
-      key_secret: razorpaySecret,
-    });
+    const instance = new Razorpay({ key_id, key_secret });
+
+    // Build receipt + notes so the payment is traceable inside Razorpay itself
+    // even if every other safety layer fails.
+    const userId = req.user?._id || null;
+    const userInfo = req.body?.orderInfo?.user_info || {};
+    const cart = req.body?.orderInfo?.cart || [];
+    const receipt = `rcpt_${userId || "anon"}_${Date.now()}`.slice(0, 40);
 
     const options = {
       amount: amountInPaise,
       currency: "INR",
-      payment_capture: 1, // Auto-capture payment immediately after authorization
+      receipt,
+      payment_capture: 1,
+      notes: {
+        userId: userId ? userId.toString() : "",
+        phone: (userInfo.contact || "").toString().slice(0, 40),
+        email: (userInfo.email || "").toString().slice(0, 60),
+        name: (userInfo.name || "").toString().slice(0, 60),
+        itemCount: String(cart.length || 0),
+        totalRupees: String(amountInRupees),
+      },
     };
 
-    console.log("[Razorpay] Options sent to Razorpay API:", JSON.stringify(options, null, 2));
+    console.log("[Razorpay] Creating Razorpay order with receipt:", receipt);
+    const rzpOrder = await instance.orders.create(options);
 
-    const order = await instance.orders.create(options);
-
-    if (!order) {
-      console.log("[Razorpay] ERROR: Order creation returned null/undefined");
-      return res.status(500).send({
-        message: "Error occurred when creating order!",
-      });
+    if (!rzpOrder) {
+      return res.status(500).send({ message: "Error occurred when creating order!" });
     }
 
-    console.log("[Razorpay] Order created successfully:");
-    console.log("[Razorpay] Order ID:", order.id);
-    console.log("[Razorpay] Order Amount (paise):", order.amount);
-    console.log("[Razorpay] Order Amount (rupees):", order.amount / 100);
-    console.log("[Razorpay] Order Currency:", order.currency);
-    console.log("[Razorpay] Full order response:", JSON.stringify(order, null, 2));
-    console.log("[Razorpay] ========== Order Creation End ==========");
+    // LAYER 2 SAFETY NET: save a PendingPayment record BEFORE the user ever sees
+    // the checkout modal. Status = "created". If anything downstream dies —
+    // browser crash, token expiry, network drop — this record lets us recover
+    // the order from the Razorpay webhook using just razorpayOrderId.
+    // This is the most important change: the safety net now runs BEFORE money moves.
+    if (req.body?.orderInfo) {
+      try {
+        await PendingPayment.findOneAndUpdate(
+          { razorpayOrderId: rzpOrder.id },
+          {
+            razorpayOrderId: rzpOrder.id,
+            amount: amountInRupees,
+            userId: userId,
+            orderInfo: req.body.orderInfo,
+            status: "created",
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        console.log("[Razorpay] Pre-payment safety net saved:", rzpOrder.id);
+      } catch (pendingErr) {
+        // Do NOT fail the checkout on safety-net save failure — just warn loudly.
+        console.error("[Razorpay] WARNING: Could not save pre-payment safety net:", pendingErr.message);
+      }
+    }
 
-    res.send(order);
+    console.log("[Razorpay] Order created:", rzpOrder.id, "amount:", rzpOrder.amount);
+    console.log("[Razorpay] ========== Order Creation End ==========");
+    res.send(rzpOrder);
   } catch (err) {
-    console.log("[Razorpay] ERROR in createOrderByRazorPay:", err.message);
-    console.log("[Razorpay] Error stack:", err.stack);
-    res.status(500).send({
-      message: err.message,
-    });
+    console.error("[Razorpay] ERROR in createOrderByRazorPay:", err.message);
+    console.error("[Razorpay] Error stack:", err.stack);
+    res.status(500).send({ message: err.message });
   }
 };
 
 const addRazorpayOrder = async (req, res) => {
   console.log("[Razorpay] ========== Add Order Start ==========");
-  console.log("[Razorpay] User ID:", req.user?._id);
-  console.log("[Razorpay] Request body keys:", Object.keys(req.body));
-  console.log("[Razorpay] Payment method:", req.body.paymentMethod);
-  console.log("[Razorpay] Total amount:", req.body.total);
-  console.log("[Razorpay] Cart items count:", req.body.cart?.length);
-  console.log("[Razorpay] Razorpay Payment ID:", req.body.razorpay?.razorpayPaymentId);
-  console.log("[Razorpay] User info:", {
-    name: req.body.user_info?.name,
-    contact: req.body.user_info?.contact,
-    email: req.body.user_info?.email,
-  });
+  const razorpayPaymentId = req.body?.razorpay?.razorpayPaymentId;
+  const razorpayOrderId = req.body?.razorpay?.razorpayOrderId;
+  const razorpaySignature = req.body?.razorpay?.razorpaySignature;
+  console.log("[Razorpay] paymentId:", razorpayPaymentId, "orderId:", razorpayOrderId);
+  console.log("[Razorpay] Authed user:", req.user?._id || "anonymous (safety mode)");
 
   try {
-    // Log cart items structure to verify product details are included
-    const cartItemsDebug = req.body.cart?.map(item => ({
-      id: item.id,
-      title: item.title,
-      sku: item.sku,
-      hsn: item.hsn,
-      unit: item.unit,
-      brand: item.brand,
-      price: item.price,
-      quantity: item.quantity,
-    })) || [];
-    console.log("[Razorpay] Cart items in order:", cartItemsDebug);
+    if (!razorpayPaymentId || !razorpayOrderId || !razorpaySignature) {
+      return res.status(400).send({ message: "Missing Razorpay payment details" });
+    }
 
-    // Generate invoice number (same logic as addOrder)
-    const lastOrder = await Order.findOne({})
-      .sort({ invoice: -1 }) // get the order with highest invoice
-      .select("invoice")
-      .lean();
+    // SECURITY: verify Razorpay signature before trusting any payment data.
+    // Without this check anyone with a token could post fake paymentIds and
+    // mark orders as paid.
+    const { key_secret } = await getRazorpayCredentials();
+    if (!key_secret) {
+      return res.status(500).send({ message: "Razorpay configuration missing" });
+    }
+    const signatureOk = verifyRazorpayPaymentSignature(
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      key_secret
+    );
+    if (!signatureOk) {
+      console.error("[Razorpay] CRITICAL: Signature verification FAILED for paymentId:", razorpayPaymentId);
+      return res.status(400).send({ message: "Invalid payment signature" });
+    }
 
-    const nextInvoice = lastOrder ? lastOrder.invoice + 1 : 10000; // start from 10000 if no orders
-    console.log("[Razorpay] Next invoice number:", nextInvoice);
+    // IDEMPOTENCY: if an order already exists for this paymentId, return it.
+    // This prevents duplicate orders when both the handler AND the webhook
+    // try to create the same order (which is normal and expected).
+    const existingOrder = await Order.findOne({
+      "razorpay.razorpayPaymentId": razorpayPaymentId,
+    });
+    if (existingOrder) {
+      console.log("[Razorpay] Order already exists, returning existing:", existingOrder._id);
+      // Still mark pending payment as recovered
+      await PendingPayment.findOneAndUpdate(
+        { razorpayOrderId },
+        { status: "recovered", recoveredOrderId: existingOrder._id, razorpayPaymentId }
+      );
+      return res.status(200).send(existingOrder);
+    }
 
-    // Calculate GST, Taxable Subtotal, and Total Discount (Product Savings + Coupon)
-    let totalGst = 0;
-    let itemsTotalGross = 0;
-    let productSavings = 0;
-    let totalTaxableAmount = 0;
-
-    if (req.body.cart && Array.isArray(req.body.cart)) {
-      // 1.5️⃣ Check stock for all items in a single batch query (Optimization)
-      const cartProductIds = req.body.cart.map(item => item._id);
-      const dbProducts = await Product.find({ _id: { $in: cartProductIds } }).lean();
-
-      const productMap = dbProducts.reduce((acc, product) => {
-        acc[product._id.toString()] = product;
-        return acc;
-      }, {});
-
-      for (const item of req.body.cart) {
-        const product = productMap[item._id.toString()];
-        if (!product) {
-          console.error("[Razorpay] ERROR: Product not found:", item.title, item._id);
-          return res.status(404).send({ message: `Product ${item.title} not found!` });
-        }
-
-        if (product.stock < item.quantity) {
-          console.error("[Razorpay] ERROR: Insufficient stock for:", item.title, "Available:", product.stock, "Requested:", item.quantity);
-          return res.status(400).send({
-            message: `Insufficient stock for ${item.title}! Available: ${product.stock}, Requested: ${item.quantity}`,
-          });
-        }
-      }
-
-      req.body.cart.forEach(item => {
-        const quantity = item.quantity || 1;
-        const taxPercent = parseFloat(item.taxPercent) || 0;
-        const currentPrice = parseFloat(item.price) || 0;
-        const originalPrice = parseFloat(item.originalPrice || item.prices?.originalPrice || item.prices?.price || currentPrice);
-
-        const itemCurrentGross = currentPrice * quantity;
-        const itemOriginalGross = originalPrice * quantity;
-
-        // Taxable = Gross - GST, where GST = Gross × Tax%
-        // Use stored taxableRate from cart item (already calculated as Gross - GST per unit)
-        // Fallback: calculate from price if taxableRate not available
-        const itemTaxableRate = parseFloat(item.taxableRate);
-        let taxable, gst;
-        if (itemTaxableRate && itemTaxableRate > 0) {
-          // Use stored taxable rate
-          taxable = itemTaxableRate * quantity;
-          gst = itemCurrentGross - taxable;
-        } else {
-          // Fallback: Taxable = Gross / (1 + Tax/100)
-          taxable = itemCurrentGross / (1 + taxPercent / 100);
-          gst = itemCurrentGross - taxable;
-        }
-
-        itemsTotalGross += itemCurrentGross;
-        totalTaxableAmount += taxable;
-        totalGst += gst;
-        productSavings += Math.max(0, itemOriginalGross - itemCurrentGross);
+    // Determine user: prefer req.user (token still valid), else fall back to
+    // the PendingPayment record (saved earlier when user WAS authenticated).
+    let userId = req.user?._id;
+    let pending = null;
+    if (!userId) {
+      pending = await PendingPayment.findOne({ razorpayOrderId });
+      userId = pending?.userId;
+      console.log("[Razorpay] Recovered user from PendingPayment:", userId);
+    }
+    if (!userId) {
+      console.error("[Razorpay] CRITICAL: Cannot determine user for paymentId:", razorpayPaymentId);
+      // Save to pending payments anyway so admin can recover manually
+      await PendingPayment.findOneAndUpdate(
+        { razorpayOrderId },
+        {
+          razorpayOrderId,
+          razorpayPaymentId,
+          razorpaySignature,
+          amount: parseFloat(req.body.total) || 0,
+          orderInfo: req.body,
+          status: "failed",
+          error: "Cannot determine user (token expired and no PendingPayment record)",
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      return res.status(401).send({
+        message: "Session expired. Your payment is safe and will be processed shortly.",
       });
     }
 
-    // Use frontend-provided GST/taxable if available (to match checkout display)
-    const finalGst = req.body.totalGst !== undefined ? parseFloat(req.body.totalGst) : totalGst;
-    const finalTaxable = req.body.taxableSubtotal !== undefined ? parseFloat(req.body.taxableSubtotal) : totalTaxableAmount;
-
-    // Combined discount = Product savings (bulk/promo) + Coupon discount
-    const couponDiscount = parseFloat(req.body.discount) || 0;
-    const totalDiscount = productSavings + couponDiscount;
-
-    const newOrder = new Order({
-      ...req.body,
-      user: req.user._id,
-      invoice: nextInvoice,
-      totalGst: finalGst,
-      taxableSubtotal: finalTaxable,
-      discount: totalDiscount,
-      vat: finalGst,
-    });
-    const order = await newOrder.save();
-    console.log("[Razorpay] ========== Order Saved Successfully ==========");
-    console.log("[Razorpay] Order details:", {
-      id: order._id,
-      invoice: order.invoice,
-      total: order.total,
-      createdAt: order.createdAt,
-      paymentMethod: order.paymentMethod,
-      status: order.status,
-      cartItemsCount: order.cart?.length,
-      razorpayPaymentId: order.razorpay?.razorpayPaymentId,
+    // Build order payload — use the PendingPayment orderInfo as source of truth
+    // if it exists (most reliable: saved while user was authenticated).
+    const orderInfoSource = pending?.orderInfo || req.body;
+    const { order } = await createOrderFromPayload({
+      userId,
+      orderInfo: orderInfoSource,
+      razorpay: {
+        razorpayPaymentId,
+        razorpayOrderId,
+        razorpaySignature,
+        amount: parseFloat(req.body.total) || pending?.amount || 0,
+      },
     });
 
-    // Mark pending payment as recovered (if exists)
-    const razorpayPaymentId = req.body.razorpay?.razorpayPaymentId;
-    if (razorpayPaymentId) {
-      try {
-        const PendingPayment = require("../models/PendingPayment");
-        await PendingPayment.findOneAndUpdate(
-          { razorpayPaymentId },
-          { status: "recovered", recoveredOrderId: order._id },
-          { new: true }
-        );
-        console.log("[Razorpay] Marked pending payment as recovered");
-      } catch (pendingErr) {
-        console.log("[Razorpay] No pending payment to update (this is normal)");
+    console.log("[Razorpay] Order created:", order._id, "invoice:", order.invoice);
+
+    // Mark pending payment as recovered
+    await PendingPayment.findOneAndUpdate(
+      { razorpayOrderId },
+      {
+        status: "recovered",
+        razorpayPaymentId,
+        razorpaySignature,
+        recoveredOrderId: order._id,
       }
-    }
+    );
 
-    res.status(201).send(order);
-    handleProductQuantity(order.cart);
+    return res.status(201).send(order);
   } catch (err) {
     console.error("[Razorpay] ========== Order Creation Failed ==========");
     console.error("[Razorpay] Error:", err.message);
-    console.error("[Razorpay] Error stack:", err.stack);
-    console.error("[Razorpay] Payment ID that failed:", req.body.razorpay?.razorpayPaymentId);
+    console.error("[Razorpay] Stack:", err.stack);
 
-    // Save to pending payments for recovery if we have a payment ID
-    const razorpayPaymentId = req.body.razorpay?.razorpayPaymentId;
-    if (razorpayPaymentId) {
+    // Preserve the failed payment for admin recovery
+    if (razorpayOrderId) {
       try {
-        const PendingPayment = require("../models/PendingPayment");
         await PendingPayment.findOneAndUpdate(
-          { razorpayPaymentId },
+          { razorpayOrderId },
           {
+            razorpayOrderId,
+            razorpayPaymentId,
+            razorpaySignature,
+            amount: parseFloat(req.body.total) || 0,
+            orderInfo: req.body,
             status: "failed",
             error: err.message,
-            orderInfo: req.body,
           },
-          { upsert: true, new: true }
+          { upsert: true, new: true, setDefaultsOnInsert: true }
         );
-        console.error("[Razorpay] Saved failed order to pending payments for recovery");
+        console.error("[Razorpay] Saved failed order to PendingPayment for recovery");
       } catch (pendingErr) {
-        console.error("[Razorpay] Could not save to pending payments:", pendingErr.message);
+        console.error("[Razorpay] Could not save to PendingPayment:", pendingErr.message);
       }
     }
 
-    res.status(500).send({
-      message: err.message,
-    });
+    return res.status(err.statusCode || 500).send({ message: err.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Razorpay webhook — the ultimate safety net.
+// Razorpay calls this endpoint server-to-server when a payment is captured,
+// even if the browser died, lost connection, or the token expired.
+// Must be mounted with express.raw() so we can verify the signature.
+// ---------------------------------------------------------------------------
+const razorpayWebhook = async (req, res) => {
+  console.log("[Webhook] ========== Razorpay webhook received ==========");
+  try {
+    const signature = req.headers["x-razorpay-signature"];
+    // Prefer the raw body captured by express.raw(); fall back to stringifying req.body.
+    const rawBody = req.rawBody || (typeof req.body === "string" ? req.body : JSON.stringify(req.body));
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+      console.error("[Webhook] RAZORPAY_WEBHOOK_SECRET not set — refusing webhook");
+      return res.status(500).send({ message: "Webhook secret not configured" });
+    }
+
+    const signatureOk = verifyRazorpayWebhookSignature(rawBody, signature, webhookSecret);
+    if (!signatureOk) {
+      console.error("[Webhook] Invalid webhook signature");
+      return res.status(400).send({ message: "Invalid webhook signature" });
+    }
+
+    // Parse body (may still be a Buffer if express.raw() was used)
+    const payload = typeof req.body === "string" || Buffer.isBuffer(req.body) ? JSON.parse(rawBody) : req.body;
+    const event = payload.event;
+    console.log("[Webhook] Event:", event);
+
+    // We care about payment.captured and order.paid. Both give us orderId + paymentId.
+    if (event === "payment.captured" || event === "order.paid") {
+      const paymentEntity = payload.payload?.payment?.entity || {};
+      const orderEntity = payload.payload?.order?.entity || {};
+      const razorpayPaymentId = paymentEntity.id;
+      const razorpayOrderId = paymentEntity.order_id || orderEntity.id;
+      const amount = (paymentEntity.amount || orderEntity.amount || 0) / 100;
+
+      console.log("[Webhook] paymentId:", razorpayPaymentId, "orderId:", razorpayOrderId);
+
+      if (!razorpayOrderId || !razorpayPaymentId) {
+        console.error("[Webhook] Missing orderId or paymentId in payload");
+        return res.status(200).send({ ok: true }); // ack anyway to prevent retries
+      }
+
+      // Idempotency: if Order already exists, acknowledge and exit.
+      const existingOrder = await Order.findOne({
+        "razorpay.razorpayPaymentId": razorpayPaymentId,
+      });
+      if (existingOrder) {
+        console.log("[Webhook] Order already exists:", existingOrder._id);
+        await PendingPayment.findOneAndUpdate(
+          { razorpayOrderId },
+          { status: "recovered", razorpayPaymentId, recoveredOrderId: existingOrder._id }
+        );
+        return res.status(200).send({ ok: true, orderId: existingOrder._id });
+      }
+
+      // Look up the PendingPayment record that was saved before the modal opened.
+      const pending = await PendingPayment.findOne({ razorpayOrderId });
+      if (!pending) {
+        console.error("[Webhook] No PendingPayment found for orderId:", razorpayOrderId);
+        // Save a bare record so admin can investigate manually.
+        await PendingPayment.findOneAndUpdate(
+          { razorpayOrderId },
+          {
+            razorpayOrderId,
+            razorpayPaymentId,
+            amount,
+            orderInfo: { webhook: true, notes: paymentEntity.notes || {} },
+            status: "failed",
+            error: "No PendingPayment record — order info unavailable. Check Razorpay notes for userId.",
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        return res.status(200).send({ ok: true, warning: "no pending record" });
+      }
+
+      // Recreate the order from the pending payment's saved orderInfo
+      try {
+        const { order } = await createOrderFromPayload({
+          userId: pending.userId,
+          orderInfo: pending.orderInfo,
+          razorpay: {
+            razorpayPaymentId,
+            razorpayOrderId,
+            razorpaySignature: pending.razorpaySignature || "",
+            amount,
+          },
+        });
+        console.log("[Webhook] Order created from pending payment:", order._id, "invoice:", order.invoice);
+
+        await PendingPayment.findOneAndUpdate(
+          { razorpayOrderId },
+          {
+            status: "recovered",
+            razorpayPaymentId,
+            recoveredOrderId: order._id,
+            notes: `Recovered via webhook event=${event}`,
+          }
+        );
+        return res.status(200).send({ ok: true, orderId: order._id, invoice: order.invoice });
+      } catch (recoverErr) {
+        console.error("[Webhook] Order creation from pending failed:", recoverErr.message);
+        await PendingPayment.findOneAndUpdate(
+          { razorpayOrderId },
+          {
+            status: "failed",
+            razorpayPaymentId,
+            error: `Webhook recovery failed: ${recoverErr.message}`,
+            $inc: { recoveryAttempts: 1 },
+            lastRecoveryAttemptAt: new Date(),
+          }
+        );
+        // Still 200 so Razorpay doesn't retry indefinitely
+        return res.status(200).send({ ok: false, error: recoverErr.message });
+      }
+    }
+
+    // Unhandled event — just ack
+    return res.status(200).send({ ok: true, ignored: event });
+  } catch (err) {
+    console.error("[Webhook] Unhandled error:", err.message);
+    // Return 200 to avoid Razorpay retry storm; we've logged it.
+    return res.status(200).send({ ok: false, error: err.message });
   }
 };
 
@@ -731,37 +871,44 @@ const ownerOrderNotificationEmailBody = (option) => {
   `;
 };
 
-// Save pending payment as a safety net before order creation
-// This allows recovery if order creation fails after payment is captured
+// Save pending payment as a safety net. This is now a "captured" update —
+// it's called from the frontend handler right after Razorpay confirms payment,
+// to upgrade the record from "created" to "captured" and stamp the paymentId.
+// Public endpoint (no auth) so it works even if the token expired during UPI approval.
 const savePendingPayment = async (req, res) => {
-  const PendingPayment = require("../models/PendingPayment");
-
-  console.log("[PendingPayment] Saving pending payment...");
-  console.log("[PendingPayment] Payment ID:", req.body.razorpayPaymentId);
-  console.log("[PendingPayment] Amount:", req.body.amount);
+  console.log("[PendingPayment] Upsert request for orderId:", req.body.razorpayOrderId);
 
   try {
-    const pendingPayment = new PendingPayment({
-      razorpayPaymentId: req.body.razorpayPaymentId,
-      razorpayOrderId: req.body.razorpayOrderId,
-      razorpaySignature: req.body.razorpaySignature,
-      amount: req.body.amount,
-      orderInfo: req.body.orderInfo,
-      status: "pending",
-    });
-
-    const saved = await pendingPayment.save();
-    console.log("[PendingPayment] Saved successfully:", saved._id);
-
-    res.status(201).send(saved);
-  } catch (err) {
-    // If duplicate key error, the payment was already saved (which is fine)
-    if (err.code === 11000) {
-      console.log("[PendingPayment] Payment already saved (duplicate):", req.body.razorpayPaymentId);
-      const existing = await PendingPayment.findOne({ razorpayPaymentId: req.body.razorpayPaymentId });
-      return res.status(200).send(existing);
+    const razorpayOrderId = req.body.razorpayOrderId;
+    if (!razorpayOrderId) {
+      return res.status(400).send({ message: "razorpayOrderId is required" });
     }
 
+    const update = {
+      razorpayOrderId,
+      razorpayPaymentId: req.body.razorpayPaymentId,
+      razorpaySignature: req.body.razorpaySignature,
+      amount: req.body.amount,
+      status: "captured",
+    };
+    // Only overwrite orderInfo if caller provided one (don't clobber the
+    // authenticated copy saved at checkout start).
+    if (req.body.orderInfo) {
+      update.orderInfo = req.body.orderInfo;
+    }
+    // Only overwrite userId if caller provided one
+    if (req.body.userId) {
+      update.userId = req.body.userId;
+    }
+
+    const saved = await PendingPayment.findOneAndUpdate(
+      { razorpayOrderId },
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    console.log("[PendingPayment] Upserted:", saved._id, "status:", saved.status);
+    res.status(200).send(saved);
+  } catch (err) {
     console.error("[PendingPayment] Error saving:", err.message);
     res.status(500).send({ message: err.message });
   }
@@ -775,5 +922,6 @@ module.exports = {
   createOrderByRazorPay,
   addRazorpayOrder,
   savePendingPayment,
+  razorpayWebhook,
   sendEmailInvoiceToCustomer,
 };
