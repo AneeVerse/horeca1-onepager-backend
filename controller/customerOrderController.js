@@ -95,6 +95,25 @@ const computeCartTotals = async (cart) => {
   return { totalGst, itemsTotalGross, productSavings, totalTaxableAmount, stockError: null };
 };
 
+// Validate the delivery address on the server — never trust the client.
+// Returns an Error with statusCode, or null if valid.
+const validateDeliveryAddress = (orderInfo) => {
+  const ui = orderInfo?.user_info || {};
+  const name = (ui.name || "").toString().trim();
+  const address = (ui.address || "").toString().trim();
+  const city = (ui.city || "").toString().trim();
+  const zipCode = (ui.zipCode || "").toString().trim();
+
+  if (!name || !address || !city || !/^\d{6}$/.test(zipCode)) {
+    const err = new Error(
+      "Delivery address is incomplete. Name, address, city and a 6-digit PIN code are required."
+    );
+    err.statusCode = 400;
+    return err;
+  }
+  return null;
+};
+
 // Core order-creation helper shared by handler + webhook recovery.
 // Guarantees idempotency: if an Order already exists for the given razorpayPaymentId,
 // that existing order is returned instead of creating a duplicate.
@@ -109,6 +128,12 @@ const createOrderFromPayload = async ({ userId, orderInfo, razorpay }) => {
       return { order: existing, created: false };
     }
   }
+
+  // Server-side address validation — even the webhook recovery path goes
+  // through here, so a corrupt PendingPayment record can't create an order
+  // with no address.
+  const addressError = validateDeliveryAddress(orderInfo);
+  if (addressError) throw addressError;
 
   const { totalGst, productSavings, totalTaxableAmount, stockError } = await computeCartTotals(orderInfo.cart);
   if (stockError) {
@@ -138,8 +163,52 @@ const createOrderFromPayload = async ({ userId, orderInfo, razorpay }) => {
   });
 
   const order = await newOrder.save();
-  // Fire-and-forget stock decrement
-  handleProductQuantity(order.cart);
+
+  // Await the stock decrement so we can detect a lost race (two concurrent
+  // orders both passing the stock check, but only one getting the last unit).
+  // Each decrement is atomic with a `stock >= qty` guard, so if any item
+  // didn't match we know stock was stolen between check and decrement.
+  const stockResult = await handleProductQuantity(order.cart);
+  if (!stockResult.success) {
+    const failed = (stockResult.failedItems || [])
+      .map((f) => `${f.title} (requested ${f.requested}, available ${f.available ?? 0})`)
+      .join(", ");
+
+    if (razorpay?.razorpayPaymentId) {
+      // Money was already captured by Razorpay — we cannot simply delete the
+      // order. Flag it so an admin can issue a refund or restock manually.
+      await Order.updateOne(
+        { _id: order._id },
+        {
+          $set: {
+            status: "refund_required",
+            stockFailure: {
+              failedItems: stockResult.failedItems,
+              note: "Payment captured but stock was unavailable. Admin must refund or restock.",
+              flaggedAt: new Date(),
+            },
+          },
+        }
+      );
+      console.error(
+        `[createOrderFromPayload] Order ${order._id} created but stock unavailable: ${failed}. Flagged for admin refund.`
+      );
+      const err = new Error(
+        "Your payment was received, but one or more items sold out while checking out. Our team will contact you for a refund shortly."
+      );
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // Unpaid order (e.g. COD) — safe to roll back.
+    await Order.deleteOne({ _id: order._id });
+    const err = new Error(
+      `Sorry, these items just sold out: ${failed}. Please update your cart and try again.`
+    );
+    err.statusCode = 409;
+    throw err;
+  }
+
   return { order, created: true };
 };
 

@@ -47,7 +47,7 @@ const main = async () => {
     if (!MONGO_URI) {
         throw new Error("MONGO_URI not set in env");
     }
-    await mongoose.connect(MONGO_URI, { dbName: "horeca1" });
+    await mongoose.connect(MONGO_URI, { dbName: "horeca1", family: 4 });
     console.log("[DB] Connected");
 
     // Load models AFTER mongoose is connected

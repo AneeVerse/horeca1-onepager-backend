@@ -59,7 +59,14 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "processing", "delivered", "cancel"],
+      enum: ["pending", "processing", "delivered", "cancel", "refund_required"],
+    },
+    // Populated when an order was created (payment captured) but stock was
+    // unavailable at decrement time. Admin must refund or restock.
+    stockFailure: {
+      failedItems: [{}],
+      note: String,
+      flaggedAt: Date,
     },
   },
   {

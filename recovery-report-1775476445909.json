@@ -1,0 +1,115 @@
+{
+  "generatedAt": "2026-04-06T11:54:05.237Z",
+  "dryRun": true,
+  "daysScanned": 30,
+  "totalPaymentsFetched": 19,
+  "capturedCount": 17,
+  "alreadyHasOrder": [
+    {
+      "paymentId": "pay_SZ2yoUZivFpFtO",
+      "orderId": "69cfc9a178ec88ffef95651a",
+      "invoice": 10123
+    },
+    {
+      "paymentId": "pay_SYbRYACDuW1Inn",
+      "orderId": "69ce4ef2df9525f7f877ff63",
+      "invoice": 10122
+    },
+    {
+      "paymentId": "pay_SXgkV7YHTbRhgz",
+      "orderId": "69cb42f761e0401e56906b6d",
+      "invoice": 10121
+    },
+    {
+      "paymentId": "pay_SXRc0VCLB5VC9z",
+      "orderId": "69ca72b5884e239d79115d69",
+      "invoice": 10120
+    },
+    {
+      "paymentId": "pay_SVtjXU1eQVSeEq",
+      "orderId": "69c54bc6c6c123a28078b1b7",
+      "invoice": 10119
+    },
+    {
+      "paymentId": "pay_SVUQXrLoJFneug",
+      "orderId": "69c3efa7386bdb0f706823ba",
+      "invoice": 10118
+    },
+    {
+      "paymentId": "pay_SVRGqOciR7B03e",
+      "orderId": "69c3c4535ad209a8850d25f9",
+      "invoice": 10117
+    },
+    {
+      "paymentId": "pay_SVMt6TUHUDLfNV",
+      "orderId": "69c387eee8660d077a496e65",
+      "invoice": 10116
+    },
+    {
+      "paymentId": "pay_SULaOnSgmqNd20",
+      "orderId": "69c02128f4be64e40037760f",
+      "invoice": 10115
+    },
+    {
+      "paymentId": "pay_SSc0ys2ueLR4VT",
+      "orderId": "69ba597458aac49e74f93601",
+      "invoice": 10114
+    },
+    {
+      "paymentId": "pay_SSJL0RzbpLoMqX",
+      "orderId": "69b9586c0ced7d50a0ca6d62",
+      "invoice": 10113
+    },
+    {
+      "paymentId": "pay_SSIW2mfeVB83m3",
+      "orderId": "69b94d135b2f536729a491ee",
+      "invoice": 10112
+    },
+    {
+      "paymentId": "pay_SQhHuKognIUyaa",
+      "orderId": "69b3f830929d1454192d62c1",
+      "invoice": 10111
+    }
+  ],
+  "recoveredFromPending": [],
+  "recoveredFromNotes": [],
+  "cannotRecover": [
+    {
+      "paymentId": "pay_Sa9ocjBXBu6SYP",
+      "razorpayOrderId": "order_Sa9oMiZIBfJkQc",
+      "amount": 4085.07,
+      "contact": "+919168839831",
+      "email": "customer@example.com",
+      "capturedAt": "2026-04-06T09:27:17.000Z",
+      "notes": []
+    },
+    {
+      "paymentId": "pay_SVqAc03mP9DYPP",
+      "razorpayOrderId": "order_SVqAOgWa1HRgda",
+      "amount": 256,
+      "contact": "+919168839831",
+      "email": "customer@example.com",
+      "capturedAt": "2026-03-26T11:38:13.000Z",
+      "notes": []
+    },
+    {
+      "paymentId": "pay_SVoE9YYOqODiG3",
+      "razorpayOrderId": "order_SVPq6KG0dAmYrH",
+      "amount": 190000,
+      "contact": "+919833871150",
+      "email": "void@razorpay.com",
+      "capturedAt": "2026-03-26T09:44:11.000Z",
+      "notes": []
+    },
+    {
+      "paymentId": "pay_SVoBTyengm5Yz3",
+      "razorpayOrderId": "order_SVPoSGB96zw4rV",
+      "amount": 165909,
+      "contact": "+919833871150",
+      "email": "void@razorpay.com",
+      "capturedAt": "2026-03-26T09:41:39.000Z",
+      "notes": []
+    }
+  ],
+  "errors": []
+}
