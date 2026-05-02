@@ -328,6 +328,9 @@ const createOrderByRazorPay = async (req, res) => {
         phone: (userInfo.contact || "").toString().slice(0, 40),
         email: (userInfo.email || "").toString().slice(0, 60),
         name: (userInfo.name || "").toString().slice(0, 60),
+        address: (userInfo.address || "").toString().slice(0, 60),
+        city: (userInfo.city || "").toString().slice(0, 40),
+        zipCode: (userInfo.zipCode || "").toString().slice(0, 10),
         itemCount: String(cart.length || 0),
         totalRupees: String(amountInRupees),
       },
@@ -549,7 +552,7 @@ const razorpayWebhook = async (req, res) => {
       const razorpayOrderId = paymentEntity.order_id || orderEntity.id;
       const amount = (paymentEntity.amount || orderEntity.amount || 0) / 100;
 
-      console.log("[Webhook] paymentId:", razorpayPaymentId, "orderId:", razorpayOrderId);
+      console.log("[Webhook] paymentId:", razorpayPaymentId, "orderId:", razorpayOrderId, "amount:", amount);
 
       if (!razorpayOrderId || !razorpayPaymentId) {
         console.error("[Webhook] Missing orderId or paymentId in payload");
@@ -570,26 +573,110 @@ const razorpayWebhook = async (req, res) => {
       }
 
       // Look up the PendingPayment record that was saved before the modal opened.
-      const pending = await PendingPayment.findOne({ razorpayOrderId });
+      let pending = await PendingPayment.findOne({ razorpayOrderId });
+
+      // --------------------------------------------------------------------------
+      // CRITICAL RECOVERY: No PendingPayment record found.
+      // This happens when:
+      //   1. The PendingPayment save itself failed (DB error during checkout start), OR
+      //   2. The webhook fires before createOrderByRazorPay completes (race), OR
+      //   3. The user's session was so broken that even the safety-net save was skipped.
+      //
+      // Solution: Fetch the Razorpay order directly from their API. We embedded
+      // userId + phone + name in the order's `notes` field at creation time.
+      // Use those notes to find the user in our DB and reconstruct a minimal
+      // orderInfo so we can still create the order.
+      // --------------------------------------------------------------------------
       if (!pending) {
-        console.error("[Webhook] No PendingPayment found for orderId:", razorpayOrderId);
-        // Save a bare record so admin can investigate manually.
-        await PendingPayment.findOneAndUpdate(
-          { razorpayOrderId },
-          {
-            razorpayOrderId,
-            razorpayPaymentId,
-            amount,
-            orderInfo: { webhook: true, notes: paymentEntity.notes || {} },
-            status: "failed",
-            error: "No PendingPayment record — order info unavailable. Check Razorpay notes for userId.",
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
-        return res.status(200).send({ ok: true, warning: "no pending record" });
+        console.error("[Webhook] No PendingPayment found for orderId:", razorpayOrderId, "— attempting Razorpay API recovery");
+
+        try {
+          const { key_id, key_secret } = await getRazorpayCredentials();
+          if (key_id && key_secret) {
+            const instance = new Razorpay({ key_id, key_secret });
+            const rzpOrder = await instance.orders.fetch(razorpayOrderId);
+            const notes = rzpOrder?.notes || {};
+            console.log("[Webhook] Razorpay order notes:", JSON.stringify(notes));
+
+            const Customer = require("../models/Customer");
+            let userId = notes.userId || null;
+
+            // Fallback: resolve user by phone from Razorpay notes
+            if (!userId && notes.phone) {
+              const phoneClean = notes.phone.replace(/\D/g, "");
+              const phoneVariants = [phoneClean, `91${phoneClean}`, phoneClean.replace(/^91/, "")];
+              const customer = await Customer.findOne({ phone: { $in: phoneVariants } }).select("_id").lean();
+              if (customer) {
+                userId = customer._id;
+                console.log("[Webhook] Recovered userId via phone lookup:", userId);
+              }
+            }
+
+            if (userId) {
+              const minimalOrderInfo = {
+                user_info: {
+                  name: notes.name || "Customer",
+                  contact: notes.phone || "",
+                  email: notes.email || "customer@example.com",
+                  address: notes.address || "Address not captured — contact customer",
+                  city: notes.city || "Unknown",
+                  country: "IN",
+                  zipCode: notes.zipCode || "000000",
+                },
+                paymentMethod: "RazorPay",
+                status: "pending",
+                cart: [],
+                subTotal: amount,
+                shippingCost: 0,
+                discount: 0,
+                total: amount,
+                totalGst: 0,
+                taxableSubtotal: amount,
+                _webhookRecovery: true,
+                _webhookNote: "Recovered from Razorpay API — cart items unavailable. Admin must verify order contents.",
+              };
+              pending = await PendingPayment.findOneAndUpdate(
+                { razorpayOrderId },
+                { razorpayOrderId, razorpayPaymentId, amount, userId, orderInfo: minimalOrderInfo, status: "captured",
+                  notes: `Recovered from Razorpay API notes. Cart items unknown — admin must check Razorpay order ${razorpayOrderId}` },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+              );
+              console.log("[Webhook] PendingPayment created from Razorpay API notes, proceeding with order creation");
+            } else {
+              await PendingPayment.findOneAndUpdate(
+                { razorpayOrderId },
+                { razorpayOrderId, razorpayPaymentId, amount,
+                  orderInfo: { webhook: true, notes, amount }, status: "failed",
+                  error: `No PendingPayment AND could not resolve user from notes. Notes: ${JSON.stringify(notes)}. ADMIN: manually create order for payment ${razorpayPaymentId}` },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+              );
+              console.error("[Webhook] CRITICAL: Cannot resolve user. Saved for manual recovery. paymentId:", razorpayPaymentId);
+              return res.status(200).send({ ok: false, warning: "could_not_resolve_user", paymentId: razorpayPaymentId });
+            }
+          } else {
+            await PendingPayment.findOneAndUpdate(
+              { razorpayOrderId },
+              { razorpayOrderId, razorpayPaymentId, amount,
+                orderInfo: { webhook: true, notes: paymentEntity.notes || {} }, status: "failed",
+                error: "No PendingPayment record and Razorpay credentials unavailable for API recovery." },
+              { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+            return res.status(200).send({ ok: false, warning: "no_credentials_for_recovery" });
+          }
+        } catch (rzpApiErr) {
+          console.error("[Webhook] Razorpay API recovery attempt failed:", rzpApiErr.message);
+          await PendingPayment.findOneAndUpdate(
+            { razorpayOrderId },
+            { razorpayOrderId, razorpayPaymentId, amount,
+              orderInfo: { webhook: true, notes: paymentEntity.notes || {} }, status: "failed",
+              error: `No PendingPayment. Razorpay API recovery also failed: ${rzpApiErr.message}` },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+          return res.status(200).send({ ok: false, warning: "api_recovery_failed" });
+        }
       }
 
-      // Recreate the order from the pending payment's saved orderInfo
+      // At this point pending is guaranteed — recreate the order from its saved orderInfo
       try {
         const { order } = await createOrderFromPayload({
           userId: pending.userId,
@@ -605,27 +692,17 @@ const razorpayWebhook = async (req, res) => {
 
         await PendingPayment.findOneAndUpdate(
           { razorpayOrderId },
-          {
-            status: "recovered",
-            razorpayPaymentId,
-            recoveredOrderId: order._id,
-            notes: `Recovered via webhook event=${event}`,
-          }
+          { status: "recovered", razorpayPaymentId, recoveredOrderId: order._id, notes: `Recovered via webhook event=${event}` }
         );
         return res.status(200).send({ ok: true, orderId: order._id, invoice: order.invoice });
       } catch (recoverErr) {
         console.error("[Webhook] Order creation from pending failed:", recoverErr.message);
         await PendingPayment.findOneAndUpdate(
           { razorpayOrderId },
-          {
-            status: "failed",
-            razorpayPaymentId,
+          { status: "failed", razorpayPaymentId,
             error: `Webhook recovery failed: ${recoverErr.message}`,
-            $inc: { recoveryAttempts: 1 },
-            lastRecoveryAttemptAt: new Date(),
-          }
+            $inc: { recoveryAttempts: 1 }, lastRecoveryAttemptAt: new Date() }
         );
-        // Still 200 so Razorpay doesn't retry indefinitely
         return res.status(200).send({ ok: false, error: recoverErr.message });
       }
     }

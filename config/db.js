@@ -28,11 +28,13 @@ const connectDB = async () => {
     }
     
     await mongoose.connect(connectionString, {
-      serverSelectionTimeoutMS: 30000, // 30 seconds
-      socketTimeoutMS: 45000, // 45 seconds
-      maxPoolSize: 10, // Maintain up to 10 socket connections
-      minPoolSize: 1, // Maintain at least 1 socket connection
-      maxIdleTimeMS: 30000, // Close connections after 30 seconds of inactivity
+      serverSelectionTimeoutMS: 8000,  // 8s — fail fast in serverless (Vercel max ~10s)
+      socketTimeoutMS: 15000,          // 15s socket timeout
+      connectTimeoutMS: 8000,          // 8s connect timeout
+      maxPoolSize: 5,                  // Serverless: keep pool small
+      minPoolSize: 0,                  // Allow pool to shrink to 0 when idle
+      maxIdleTimeMS: 10000,            // 10s idle — release connections quickly
+      heartbeatFrequencyMS: 10000,     // Check connection health every 10s
     });
     
     isConnected = true;
